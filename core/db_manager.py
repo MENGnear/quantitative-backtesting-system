@@ -2,23 +2,26 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/db_manager.py
-# 程式版本 : core_v1.0.0 (Phase 2: 資料層基礎建設)
+# 程式版本 : core_v1.1.0 (Phase 2: 整合 Smart 中文命名與防呆機制)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [新增] 建立 QBS 專案的資料庫統一管理模組 (Database Manager)。
-#   2. [建置] 實作 init_db()，初始化 user_watchlist, daily_price, tw50_signals 三大資料表。
-#   3. [功能] 提供針對 user_watchlist 的 CRUD 操作 (新增、查詢、刪除)，供前端 UI 安全呼叫。
+#   1. [新增] 匯入 requests 與 re，實作 fetch_chinese_name 爬取 Yahoo 股市中文名稱。
+#   2. [優化] 於 add_watchlist_item 底層納入 .TW 自動補齊防呆機制。
+#   3. [優化] 寫入資料庫時，自動將 display_name 轉為乾淨的中文格式 (例: 2330 台積電)。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 模組匯入與路徑設定 (Imports & Paths)
 #   - 2️⃣ 資料庫初始化 (Database Initialization)
-#   - 3️⃣ 監測清單管理功能 (Watchlist CRUD Operations)
+#   - 3️⃣ 爬蟲與名稱解析 (Web Scraping & Naming) - 🔥 V1.1.0 新增
+#   - 4️⃣ 監測清單管理功能 (Watchlist CRUD Operations) - 🔥 V1.1.0 優化
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 import sqlite3
 import os
 import logging
+import requests
+import re
 
 # ==========================================================
 # 1️⃣ 模組匯入與路徑設定
@@ -41,7 +44,7 @@ def init_db():
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             
-            # Table 1: 永久監測清單 (取代舊版 Session 與 JSON 暫存)
+            # Table 1: 永久監測清單
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS user_watchlist (
                     ticker TEXT PRIMARY KEY,
@@ -53,7 +56,7 @@ def init_db():
                 )
             ''')
             
-            # Table 2: 5 年歷史 K 線資料 (重型讀寫庫)
+            # Table 2: 5 年歷史 K 線資料
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS daily_price (
                     ticker TEXT, 
@@ -67,7 +70,7 @@ def init_db():
                 )
             ''')
             
-            # Table 3: TW50 回測訊號與評分 (輕量庫，專供 UI 極速渲染)
+            # Table 3: TW50 回測訊號與評分
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS tw50_signals (
                     ticker TEXT PRIMARY KEY,
@@ -87,13 +90,44 @@ def init_db():
         return False
 
 # ==========================================================
-# 3️⃣ 監測清單管理功能 (Watchlist CRUD Operations)
+# 3️⃣ 爬蟲與名稱解析 (Web Scraping & Naming)
 # ==========================================================
-def add_watchlist_item(ticker, display_name, market, thresholds="", entry_prices="", exit_prices=""):
-    """
-    新增或更新監測標的 (UI 側邊欄呼叫)
-    若 ticker 已存在，則透過 REPLACE 覆蓋更新設定。
-    """
+def fetch_chinese_name(ticker):
+    """爬取 Yahoo 股市的中文名稱 (承襲 A_MON 的優良傳統)"""
+    display_name = ticker
+    if ".TW" in ticker.upper():
+        code = ticker.upper().replace(".TW", "")
+        try:
+            res = requests.get(f"https://tw.stock.yahoo.com/quote/{code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
+            match = re.search(r'<title>(.*?)\(', res.text)
+            if match:
+                chinese_name = match.group(1).strip()
+                display_name = f"{code} {chinese_name}"
+            else:
+                display_name = code
+        except Exception:
+            display_name = code
+            
+    return display_name.replace(".TW", "")
+
+# ==========================================================
+# 4️⃣ 監測清單管理功能 (Watchlist CRUD Operations)
+# ==========================================================
+def add_watchlist_item(ticker, display_name="", market="", thresholds="", entry_prices="", exit_prices=""):
+    """新增或更新監測標的 (具備自動補齊與中文爬蟲功能)"""
+    # 1. 防呆邏輯：首字為數字且無 .TW 則自動補齊
+    ticker = ticker.strip().upper()
+    if ticker[0].isdigit() and ".TW" not in ticker:
+        ticker += ".TW"
+
+    # 2. 市場判斷
+    if not market:
+        market = "tw" if ".TW" in ticker else "us"
+
+    # 3. 智慧中文命名
+    if not display_name or display_name == ticker or display_name == ticker.replace(".TW", ""):
+        display_name = fetch_chinese_name(ticker)
+
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
@@ -109,7 +143,7 @@ def add_watchlist_item(ticker, display_name, market, thresholds="", entry_prices
         return False
 
 def remove_watchlist_item(ticker):
-    """移除指定的監測標的 (UI 側邊欄呼叫)"""
+    """移除指定的監測標的"""
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
@@ -121,13 +155,10 @@ def remove_watchlist_item(ticker):
         return False
 
 def get_all_watchlist():
-    """
-    取得所有監測清單
-    回傳值：List of Dictionaries，方便 Streamlit 前端直接讀取與操作。
-    """
+    """取得所有監測清單"""
     try:
         with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row  # 讓回傳結果可以直接用 dict 的 key 存取
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM user_watchlist ORDER BY ticker ASC")
             rows = cursor.fetchall()
@@ -143,5 +174,3 @@ if __name__ == "__main__":
     print(f"📂 資料庫路徑解析結果: {DB_PATH}")
     if init_db():
         print("✅ SQLite 資料庫與資料表初始化成功！")
-    else:
-        print("❌ SQLite 資料庫初始化失敗！")
