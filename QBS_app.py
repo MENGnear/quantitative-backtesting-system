@@ -2,18 +2,17 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v1.5.0 (Phase 2: 側邊欄 UI 優化與族群批次匯入)
+# 程式版本 : QBS_v1.6.0 (Phase 2: UI 顯示智慧中文命名)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [優化] 移除區塊 0 的單一 TW50 按鈕，改為在手動輸入下方新增「🗂️ 族群批次輸入」區塊。
-#   2. [新增] 實作動態讀取 config/sectors.json，將族群清單自動轉為下拉式選單。
-#   3. [還原] 於「手動輸入股票」區塊補回 .TW 自動補齊的防呆邏輯。
+#   1. [優化] 實作步驟二：側邊欄「移除監測清單」下拉選單，改為顯示乾淨的中文名稱 (display_name)。
+#   2. [精簡] 依賴底層 db_manager 的智慧命名與防呆機制，簡化前端傳遞邏輯。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置 (Page Config)
 #   - 2️⃣ 動態載入外部深色視覺 CSS 樣板 (Load External CSS)
-#   - 3️⃣ 系統全域常數與資料庫初始化 (State & DB Management)
-#   - 4️⃣ 側邊欄控制面板 (Sidebar Control Panel) - 🔥 V1.5.0 UI 佈局更新
+#   - 3️⃣ 系統全域常數與資料庫初始化 (State & DB Management) - 🔥 V1.6.0 建立顯示字典
+#   - 4️⃣ 側邊欄控制面板 (Sidebar Control Panel) - 🔥 V1.6.0 下拉選單顯示優化
 #   - 5️⃣ 主畫面分頁路由導覽 (Main Page Tab Navigation)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -50,7 +49,7 @@ load_css(os.path.join("assets", "style.css"))
 # ==========================================================
 # 3️⃣ 系統全域常數與資料庫/Session 初始化
 # ==========================================================
-APP_VERSION = "QBS_v1.5.0"
+APP_VERSION = "QBS_v1.6.0"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 if "db_initialized" not in st.session_state:
@@ -60,8 +59,10 @@ if "db_initialized" not in st.session_state:
 if "monitoring" not in st.session_state: 
     st.session_state.monitoring = False
 
+# 撈取資料庫清單，並建立代碼與顯示名稱的對映字典
 current_watchlist = db_manager.get_all_watchlist()
 watchlist_tickers = [item['ticker'] for item in current_watchlist]
+watchlist_display_map = {item['ticker']: item['display_name'] for item in current_watchlist}
 
 # ==========================================================
 # 4️⃣ 側邊欄控制面板
@@ -104,7 +105,7 @@ with st.sidebar:
         if st.button("確認輸入", use_container_width=True, key="btn_db"): 
             if selected_db != "--- 請選擇 ---":
                 mkt = "tw" if "台灣" in market_choice else "us"
-                db_manager.add_watchlist_item(selected_db, selected_db, mkt, th_text_db, entry_text_db, exit_text_db)
+                db_manager.add_watchlist_item(selected_db, market=mkt, thresholds=th_text_db, entry_prices=entry_text_db, exit_prices=exit_text_db)
                 st.success(f"✅ 已將 {selected_db} 加入資料庫！")
                 st.rerun()
             
@@ -112,20 +113,16 @@ with st.sidebar:
         
         # --- 區塊 B: 手動輸入股票 ---
         st.markdown("<div style='color:#38bdf8; font-size:1.0rem; font-weight:700; margin-bottom:5px;'>✍️ 手動輸入股票</div>", unsafe_allow_html=True)
-        new_sym = st.text_input("輸入股票代碼", value="", placeholder="例: AAPL 或 2330", key="sym_manual").strip().upper()
+        new_sym = st.text_input("輸入股票代碼", value="", placeholder="例: AAPL 或 2330", key="sym_manual").strip()
         th_text_manual = st.text_input("提醒門檻 (%)", value="", placeholder="例: 5, 10", key="th_manual_2")
         entry_text_manual = st.text_input("進場提醒 ($)", value="", placeholder="例: 150, 200", key="entry_manual_2")
         exit_text_manual = st.text_input("出場提醒 ($)", value="", placeholder="例: 140, 190", key="exit_manual_2")
         
         if st.button("確認輸入 ", use_container_width=True, key="btn_manual_add"): 
             if new_sym:
-                # 實作 .TW 防呆邏輯：首字為數字且無 .TW 則自動補齊
-                if new_sym[0].isdigit() and ".TW" not in new_sym: 
-                    new_sym += ".TW"
-                    
-                mkt = "tw" if ".TW" in new_sym else "us"
-                db_manager.add_watchlist_item(new_sym, new_sym, mkt, th_text_manual, entry_text_manual, exit_text_manual)
-                st.success(f"✅ 已將 {new_sym} 加入資料庫！")
+                # 依賴底層 db_manager 的防呆機制與中文爬蟲
+                db_manager.add_watchlist_item(new_sym, thresholds=th_text_manual, entry_prices=entry_text_manual, exit_prices=exit_text_manual)
+                st.success(f"✅ 已送出 {new_sym}，系統將自動解析名稱並加入資料庫！")
                 st.rerun()
             else:
                 st.error("代碼不可為空！")
@@ -139,7 +136,6 @@ with st.sidebar:
         sectors_data = {}
         sector_file = os.path.join("config", "sectors.json")
         
-        # 動態讀取 JSON 族群設定檔
         if os.path.exists(sector_file):
             with open(sector_file, "r", encoding="utf-8") as f:
                 try:
@@ -154,19 +150,24 @@ with st.sidebar:
             if selected_sector != "--- 請選擇 ---":
                 tickers_to_add = sectors_data.get(selected_sector, [])
                 for t in tickers_to_add:
-                    mkt = "tw" if ".TW" in t else "us"
-                    db_manager.add_watchlist_item(t, t, mkt, "", "", "")
+                    # 依賴底層 db_manager 自動處理命名與防呆
+                    db_manager.add_watchlist_item(t)
                 st.success(f"✅ 已批次寫入 {len(tickers_to_add)} 檔 {selected_sector} 標的！")
                 st.rerun()
             
-    # 3. 移除監測清單
+    # 3. 移除監測清單 (🔥 利用 format_func 顯示乾淨中文名)
     with st.container(border=True):
         st.markdown("### 🗑️ 移除監測清單")
-        del_sym = st.selectbox("刪除目標", ["--- 請選擇 ---"] + watchlist_tickers)
+        del_sym = st.selectbox(
+            "刪除目標", 
+            ["--- 請選擇 ---"] + watchlist_tickers,
+            format_func=lambda x: watchlist_display_map.get(x, x) if x != "--- 請選擇 ---" else x
+        )
         if st.button("確認刪除", use_container_width=True):
             if del_sym != "--- 請選擇 ---":
                 db_manager.remove_watchlist_item(del_sym)
-                st.success(f"🗑️ 已從資料庫移除 {del_sym}")
+                display_n = watchlist_display_map.get(del_sym, del_sym)
+                st.success(f"🗑️ 已從資料庫移除 {display_n}")
                 st.rerun()
             
     # 4. 網頁刷新頻率
@@ -209,7 +210,10 @@ current_page = st.radio("main_nav", ["📡 頁面 A : 即時雷達監測", "🎯
 
 if current_page == "📡 頁面 A : 即時雷達監測":
     st.markdown("### 📡 即時雷達監測 (Monitor)")
-    st.info(f"💡 目前資料庫共有 {len(watchlist_tickers)} 檔監測標的：{', '.join(watchlist_tickers)}")
+    
+    # 測試顯示：列出目前資料庫內的乾淨名稱
+    clean_names = [watchlist_display_map.get(t, t) for t in watchlist_tickers]
+    st.info(f"💡 目前資料庫共有 {len(watchlist_tickers)} 檔監測標的：{', '.join(clean_names)}")
 
 elif current_page == "🎯 頁面 B : 策略回測戰情":
     st.markdown("### 🎯 策略回測戰情 (TW50)")
