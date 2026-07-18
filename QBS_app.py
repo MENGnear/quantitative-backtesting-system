@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v1.2.0 (Phase 1: 補回 TW50 一鍵載入按鈕)
+# 程式版本 : QBS_v1.3.0 (Phase 1: 關注點分離，CSS 獨立模組化)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [修正] 依據【討論15】，在「新增監測股票」區塊補回遺漏的「📥 一鍵載入 TW50 清單」按鈕 (新需求 D1)。
-#   2. [維持] CSS 視覺樣板、所有從截圖還原的 UI 欄位與 Key 值皆完全保留，確保介面穩定。
-#   3. [優化] 利用水平分隔線 (<hr>) 劃分批次載入、資料庫選取與手動輸入三個子區塊，提升 UI 層次感。
+#   1. [重構] 依據【討論16】，將近百行的 CSS 程式碼從本檔抽離至 assets/style.css，落實前端關注點分離 (SoC)。
+#   2. [優化] 區塊 2 加入動態讀取外部 CSS 檔案的 Python 邏輯，大幅精簡主程式長度。
+#   3. [維持] 側邊欄 UI 與分頁路由等核心邏輯完全凍結不變，確保介面運作穩定。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置 (Page Config)
-#   - 2️⃣ 頂級深色優化視覺 CSS 樣板 (UI Lock-in)
+#   - 2️⃣ 動態載入外部深色視覺 CSS 樣板 (Load External CSS) - 🔥 V1.3.0 大幅更新
 #   - 3️⃣ 系統全域常數與 Session 狀態初始化 (State Management)
-#   - 4️⃣ 側邊欄控制面板 (Sidebar Control Panel) - 🔥 V1.2.0 補回 TW50 按鈕
+#   - 4️⃣ 側邊欄控制面板 (Sidebar Control Panel)
 #   - 5️⃣ 主畫面分頁路由導覽 (Main Page Tab Navigation)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -21,6 +21,7 @@
 import streamlit as st
 import datetime
 import pytz
+import os
 
 # ==========================================================
 # 1️⃣ 頁面設定與全域配置
@@ -33,100 +34,21 @@ st.set_page_config(
 )
 
 # ==========================================================
-# 2️⃣ 頂級深色優化視覺 CSS 樣板 (嚴格保留原設定，不更動任何 Class)
+# 2️⃣ 動態載入外部深色視覺 CSS 樣板
 # ==========================================================
-st.markdown(r'''
-<style>
-/* =========================================
-   1. 全域與基礎設定 (字體與網頁背景)
-   ========================================= */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-html, body, [data-testid="stAppViewContainer"] { 
-    font-family: 'Inter', sans-serif !important; 
-    background-color: #0e1117 !important; 
-    color: #f1f5f9 !important; 
-}
-[data-testid="stActionElements"] { display: none !important; }
-header[data-testid="stHeader"] { background-color: transparent !important; }
-.main .block-container { padding-top: 1.5rem !important; margin-top: -30px !important; }
-h1 { margin-top: 0px !important; padding-top: 0px !important; margin-bottom: 5px !important; }
+def load_css(file_path):
+    if os.path.exists(file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    else:
+        st.warning(f"⚠️ 找不到視覺樣板檔案: {file_path}")
 
-/* =========================================
-   2. 側邊欄與元件視覺 (輸入框、選單、按鈕)
-   ========================================= */
-[data-testid="stSidebar"] { 
-    background-color: #171a23 !important; 
-    border-right: 1px solid #2d3748 !important; 
-}
-[data-testid="stVerticalBlockBorderWrapper"] { 
-    background-color: #1e293b !important; 
-    border: 1px solid #94a3b8 !important; 
-    border-radius: 12px !important; 
-    padding: 15px !important; 
-    margin-bottom: 10px !important; 
-}
-[data-testid="collapsedControl"] svg, [data-testid="stSidebarCollapseButton"] svg, button[kind="header"] svg { 
-    color: #ffffff !important; fill: #ffffff !important; 
-}
-.stTextInput div[data-baseweb="input"], .stSelectbox div[data-baseweb="select"] > div { 
-    background-color: #0f172a !important; 
-    border: 1px solid #475569 !important; 
-    border-radius: 8px !important;  
-}
-.stTextInput input { color: #ffffff !important; background-color: transparent !important; }
-.stSelectbox div[data-baseweb="select"] span { color: #ffffff !important; }
-[data-testid="stSidebar"] h3 { color: #ffffff !important; font-size: 1.1rem !important; font-weight: 700 !important; margin-bottom: 15px !important; margin-top: 0px !important; padding-top: 0px !important; }
-[data-testid="stWidgetLabel"] p, div[data-testid="stMarkdownContainer"] p, .stSlider label { color: #cbd5e1 !important; font-weight: 600 !important; font-size: 0.95rem !important; }
-div[role="radiogroup"] label { color: #f1f5f9 !important; font-weight: 600 !important; }
-
-.stButton > button { 
-    background: linear-gradient(135deg, #3b82f6, #1d4ed8) !important; 
-    color: white !important; border: none !important; border-radius: 8px !important; font-weight: 600 !important; transition: all 0.2s ease !important; 
-}
-.stButton > button:hover { box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important; transform: translateY(-1px) !important; }
-
-/* =========================================
-   3. 矩陣排版與個股卡片基礎外觀
-   ========================================= */
-.section-title { font-size: 1.3rem; font-weight: 700; color: #f8fafc; margin: 15px 0 10px 0; padding-left: 8px; border-left: 4px solid #3b82f6; }
-.flex-matrix-container { display: flex; flex-wrap: wrap; gap: 14px; width: 100%; justify-content: flex-start !important; margin-bottom: 15px; }
-.stock-compact-card { 
-    background-color: #171a23; 
-    border: 1px solid #2d3748; 
-    border-radius: 12px; padding: 16px; 
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2); 
-    width: 295px !important; max-width: 295px !important; min-width: 295px !important; box-sizing: border-box; 
-}
-
-.alert-tw-up { color: #ef4444; background-color: rgba(239, 68, 68, 0.2) !important; width: 100%; text-align: center; padding: 5px; border-radius: 6px; }
-
-.card-title-txt { margin: 0 0 2px 0; font-size: 1.25rem; font-weight: 700; color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; justify-content: space-between; align-items: baseline; }
-.card-price-txt { color: #38bdf8; margin: 0 0 10px 0; font-size: 1.9rem; font-weight: 700; }
-.card-middle-layout { display: flex; justify-content: space-between; margin-bottom: 4px; }
-.layout-left-col { flex: 1.1; border-right: 1px dashed #2d3748; padding-right: 4px; text-align: left !important; line-height: 1.7; }
-.layout-right-col { flex: 0.9; text-align: left !important; padding-left: 12px; line-height: 1.7; }
-.txt-label { color: #94a3b8; font-size: 0.82rem; white-space: nowrap; } 
-.txt-label-rsi { color: #a78bfa; font-size: 0.82rem; white-space: nowrap; } 
-.txt-bold-val { color: #f1f5f9; font-size: 0.82rem; font-weight: 600; }
-.custom-alert-box { min-height: 38px; display: flex; align-items: center; justify-content: center; border-radius: 6px; margin-top: 10px; font-size: 0.82rem; font-weight: 700; box-sizing: border-box; }
-
-/* =========================================
-   TW50 專屬卡片細節
-   ========================================= */
-h1.main-title { color: #f8fafc; font-weight: 800; text-align: left; padding-bottom: 10px; border-bottom: 2px solid #1e293b; margin-bottom: 20px; font-size: 1.8rem; }
-.score-highlight { color: #facc15; font-size: 1.6rem; font-weight: 900; }
-
-/* =========================================
-   分頁選項專屬樣式 (從程式 C 繼承)
-   ========================================= */
-div[data-testid="stRadio"] div[role="radiogroup"] { gap: 10px; }
-</style>
-''', unsafe_allow_html=True)
+load_css(os.path.join("assets", "style.css"))
 
 # ==========================================================
 # 3️⃣ 系統全域常數與 Session 狀態初始化
 # ==========================================================
-APP_VERSION = "QBS_v1.2.0"
+APP_VERSION = "QBS_v1.3.0"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 # 初始化 UI 狀態記憶 (Phase 1 骨架暫存)
@@ -154,7 +76,7 @@ with st.sidebar:
         if st.session_state.monitoring: st.success("🟢 系統即時監測中...")
         else: st.info("🟡 監測暫停中")
     
-    # 2. 新增監測股票 (🔥 補回 TW50 一鍵載入，並完美保留截圖還原 UI)
+    # 2. 新增監測股票
     with st.container(border=True):
         st.markdown("### ➕ 新增監測股票")
         
