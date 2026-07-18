@@ -2,19 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v1.0.0 (Phase 1: 骨架建置與視覺定錨)
+# 程式版本 : QBS_v1.1.0 (Phase 1: 側邊欄 UI 截圖完美還原)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [全新] 建立 QBS 專案入口網頁，融合 Monitor 與 TW50 雙系統介面。
-#   2. [視覺] 完美繼承並鎖定原專案頂級深色優化視覺 CSS 樣板，確保 UI 體驗一致。
-#   3. [導覽] 導入程式 C 的分頁導覽 (Tabs) 路由邏輯，實現單頁動態切換。
-#   4. [擴充] 側邊欄 UI 新增「一鍵載入 TW50」與「手動更新 5 年歷史資料」按鈕骨架。
+#   1. [新增] 依據 image_0a41ae.png 截圖，完美還原「從市場資料庫選取」與「手動輸入股票」的完整表單介面。
+#   2. [優化] 為所有的 text_input 設定獨立的 key，防止 Streamlit UI 元件衝突報錯。
+#   3. [維持] CSS 視覺樣板、分頁路由、其他側邊欄功能完全凍結不變，確保穩定性。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置 (Page Config)
 #   - 2️⃣ 頂級深色優化視覺 CSS 樣板 (UI Lock-in)
 #   - 3️⃣ 系統全域常數與 Session 狀態初始化 (State Management)
-#   - 4️⃣ 側邊欄控制面板 (Sidebar Control Panel)
+#   - 4️⃣ 側邊欄控制面板 (Sidebar Control Panel) - 🔥 V1.1.0 局部大幅更新
 #   - 5️⃣ 主畫面分頁路由導覽 (Main Page Tab Navigation)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -127,7 +126,7 @@ div[data-testid="stRadio"] div[role="radiogroup"] { gap: 10px; }
 # ==========================================================
 # 3️⃣ 系統全域常數與 Session 狀態初始化
 # ==========================================================
-APP_VERSION = "QBS_v1.0.0"
+APP_VERSION = "QBS_v1.1.0"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 # 初始化 UI 狀態記憶 (Phase 1 骨架暫存)
@@ -141,7 +140,7 @@ with st.sidebar:
     with st.container(border=True):
         st.markdown("### ⚙️ 控制與設定面板")
     
-    # 1. 執行股票監測 (原 Monitor 功能)
+    # 1. 執行股票監測
     with st.container(border=True):
         st.markdown("### ▶️ 執行股票監測")
         col_btn1, col_btn2 = st.columns(2)
@@ -155,21 +154,37 @@ with st.sidebar:
         if st.session_state.monitoring: st.success("🟢 系統即時監測中...")
         else: st.info("🟡 監測暫停中")
     
-    # 2. 新增監測股票 (整合手動與 TW50 一鍵匯入)
+    # 2. 新增監測股票 (🔥 依據 image_0a41ae.png 截圖完美還原)
     with st.container(border=True):
         st.markdown("### ➕ 新增監測股票")
-        if st.button("📥 一鍵載入 TW50 清單", use_container_width=True):
-            st.toast("UI 測試：TW50 載入指令已觸發", icon="✅")
+        
+        # --- 區塊 A: 從市場資料庫選取 ---
+        st.markdown("<div style='color:#facc15; font-size:1.0rem; font-weight:700; margin-bottom:5px;'>📂 從市場資料庫選取</div>", unsafe_allow_html=True)
+        market_choice = st.radio("選擇市場分類", ["tw 台灣", "us 美國"], horizontal=True, label_visibility="collapsed")
+        
+        if "台灣" in market_choice:
+            selected_db = st.selectbox("tw 資料庫選取", ["--- 請選擇 ---", "2330 台積電 (測試)"])
+        else:
+            selected_db = st.selectbox("us 資料庫選取", ["--- 請選擇 ---", "AAPL 蘋果 (測試)"])
+            
+        th_text_db = st.text_input("提醒門檻 (%)", value="", placeholder="例: 5, 10", key="th_db")
+        entry_text_db = st.text_input("進場提醒 ($)", value="", placeholder="例: 150, 200 (當現價 >= 此設定觸發)", key="entry_db")
+        exit_text_db = st.text_input("出場提醒 ($)", value="", placeholder="例: 140, 190 (當現價 <= 此設定觸發)", key="exit_db")
+        
+        if st.button("確認輸入", use_container_width=True, key="btn_db"): 
+            st.toast(f"UI 測試：從資料庫選取新增 {selected_db}", icon="✅")
             
         st.markdown("<hr style='margin: 15px 0; border-color: #475569;'>", unsafe_allow_html=True)
+        
+        # --- 區塊 B: 手動輸入股票 ---
         st.markdown("<div style='color:#38bdf8; font-size:1.0rem; font-weight:700; margin-bottom:5px;'>✍️ 手動輸入股票</div>", unsafe_allow_html=True)
         new_sym = st.text_input("輸入股票代碼", value="", placeholder="例: AAPL 或 2330", key="sym_manual")
-        th_text_manual = st.text_input("提醒門檻 (%)", value="", placeholder="例: 5, 10", key="th_manual")
-        entry_text_manual = st.text_input("進場提醒 ($)", value="", placeholder="例: 150, 200", key="entry_manual")
-        exit_text_manual = st.text_input("出場提醒 ($)", value="", placeholder="例: 140, 190", key="exit_manual")
+        th_text_manual = st.text_input("提醒門檻 (%)", value="", placeholder="例: 5, 10", key="th_manual_2")
+        entry_text_manual = st.text_input("進場提醒 ($)", value="", placeholder="例: 150, 200 (當現價 >= 此設定觸發)", key="entry_manual_2")
+        exit_text_manual = st.text_input("出場提醒 ($)", value="", placeholder="例: 140, 190 (當現價 <= 此設定觸發)", key="exit_manual_2")
         
-        if st.button("確認新增", use_container_width=True, key="btn_manual_add"): 
-            st.toast(f"UI 測試：欲新增 {new_sym}", icon="✅")
+        if st.button("確認輸入 ", use_container_width=True, key="btn_manual_add"): 
+            st.toast(f"UI 測試：手動新增 {new_sym}", icon="✅")
             
     # 3. 移除監測清單
     with st.container(border=True):
@@ -210,7 +225,7 @@ with st.sidebar:
     )
 
 # ==========================================================
-# 5️⃣ 主畫面分頁路由導覽 (依據程式 C 架構萃取)
+# 5️⃣ 主畫面分頁路由導覽
 # ==========================================================
 st.markdown('<h1 class="main-title">📈 Quantitative Backtesting System (QBS)</h1>', unsafe_allow_html=True)
 
@@ -223,13 +238,7 @@ current_page = st.radio("main_nav", ["📡 頁面 A : 即時雷達監測", "🎯
 if current_page == "📡 頁面 A : 即時雷達監測":
     st.markdown("### 📡 即時雷達監測 (Monitor)")
     st.info("💡 這裡未來將載入 `ui_monitor.py`。會顯示大盤狀態，以及依據台美股時間自動切換的即時監測紅綠小卡。")
-    # 未來實作：
-    # import ui_monitor
-    # ui_monitor.render_page()
 
 elif current_page == "🎯 頁面 B : 策略回測戰情":
     st.markdown("### 🎯 策略回測戰情 (TW50)")
     st.info("💡 這裡未來將載入 `ui_strategy.py`。會直接讀取 SQLite 資料庫，極速渲染經雙重排序後的 TW50 策略小卡矩陣。")
-    # 未來實作：
-    # import ui_strategy
-    # ui_strategy.render_page()
