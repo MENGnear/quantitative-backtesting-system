@@ -1,29 +1,33 @@
 # ==========================================================
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 #  檔名：.github/workflows/daily_update.yml
-#  版次：v02.6 (回測精確對齊與 DBA 強制升級版)
+#  版次：v1.2.0 (全區塊視覺化排版版)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
-#  新增與優化：
-#  1. [權限A] 賦予 actions 機器人 contents: write 寫入權限。
-#  2. [Git機制B] 增加自動 commit 與 push 步驟，讓最新的 .db 覆蓋回 GitHub。
-#  3. [觸發C] 保留 workflow_dispatch 以便隨時手動喚醒測試。
+#  進版說明 (v1.2.0)：
+#  1. [格式優化] 捨棄單行註解，全面導入標準化的大型橫幅區塊標籤 (Banner)。
+#  2. [穩定性防護] 核心的排程、權限與邏輯縮排 100% 維持不變，確保不失效。
 # ==========================================================
 
-name: 台股50 量化回測引擎 (v02.6)
+name: QBS 量化回測引擎 (v1.2.0)
 
+# ==========================================================
+# 1️⃣ 🕒 排程與觸發機制
+# ==========================================================
 on:
   schedule:
     # 台灣時間 15:00 = UTC 07:00 (避開六日休市)
     - cron: '0 7 * * 1-5'
   workflow_dispatch: 
-    inputs: # 💡 新增手動輸入選單
+    inputs: 
       force_reset:
         description: '⚠️ 強制清空舊資料並重抓 5 年歷史資料'
         required: true
         type: boolean
         default: false
 
-# 【關鍵修復】賦予寫入權限，否則無法將資料庫推回 GitHub
+# ==========================================================
+# 2️⃣ 🔐 系統權限設定 (必要，否則無法將資料庫推回 GitHub)
+# ==========================================================
 permissions:
   contents: write
 
@@ -31,6 +35,9 @@ jobs:
   run-strategy:
     runs-on: ubuntu-latest
     steps:
+      # ==========================================================
+      # 3️⃣ 📥 雲端開發環境準備與套件安裝
+      # ==========================================================
       - name: 📥 取得程式碼
         uses: actions/checkout@v4
         
@@ -44,27 +51,34 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy yfinance
           
-      - name: 🧠 執行 v02.6 策略運算與 Telegram 推播
+      # ==========================================================
+      # 4️⃣ 🧠 執行主程式運算與發送通知
+      # ==========================================================
+      - name: 🧠 執行 v1.2.0 策略運算與 Telegram 推播
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FORCE_RESET: ${{ inputs.force_reset }} # 💡 將開關狀態傳給 Python
-        run: python main.py
+          FORCE_RESET: ${{ inputs.force_reset }} # 將開關狀態傳遞給 Python
+        run: python QBS_main.py
 
-      # 【關鍵修復】將算好的資料庫與 CSV 自動 Push 回 GitHub 儲存庫
-      - name: 🔄 將最新資料與資料庫推回 GitHub (同步更新網頁端)
+      # ==========================================================
+      # 5️⃣ 🔄 Git 自動推播機制 (同步更新網頁端)
+      # ==========================================================
+      - name: 🔄 將最新資料與資料庫推回 GitHub
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add tw50_strategy.db temp_data.csv
-          # 如果沒有變動就不會 commit 報錯
-          git commit -m "🤖 自動更新：每日回測資料庫與 CSV (v02.12)" || echo "資料庫無變動"
+          git commit -m "🤖 自動更新：每日回測資料庫與 CSV (v1.2.0)" || echo "資料庫無變動"
           git push
 
-      - name: 🗄️ 打包備份回測資料庫 (供手動下載查驗)
+      # ==========================================================
+      # 6️⃣ 🗄️ 打包備份回測資料庫 (供手動下載查驗)
+      # ==========================================================
+      - name: 🗄️ 打包備份回測資料庫
         uses: actions/upload-artifact@v4
         with:
-          name: tw50-database-v02.12
+          name: qbs-database-v1.2.0
           path: |
             tw50_strategy.db
             temp_data.csv
