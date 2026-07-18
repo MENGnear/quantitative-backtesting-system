@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v1.1.0 (Phase 1: 側邊欄 UI 截圖完美還原)
+# 程式版本 : QBS_v1.2.0 (Phase 1: 補回 TW50 一鍵載入按鈕)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [新增] 依據 image_0a41ae.png 截圖，完美還原「從市場資料庫選取」與「手動輸入股票」的完整表單介面。
-#   2. [優化] 為所有的 text_input 設定獨立的 key，防止 Streamlit UI 元件衝突報錯。
-#   3. [維持] CSS 視覺樣板、分頁路由、其他側邊欄功能完全凍結不變，確保穩定性。
+#   1. [修正] 依據【討論15】，在「新增監測股票」區塊補回遺漏的「📥 一鍵載入 TW50 清單」按鈕 (新需求 D1)。
+#   2. [維持] CSS 視覺樣板、所有從截圖還原的 UI 欄位與 Key 值皆完全保留，確保介面穩定。
+#   3. [優化] 利用水平分隔線 (<hr>) 劃分批次載入、資料庫選取與手動輸入三個子區塊，提升 UI 層次感。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置 (Page Config)
 #   - 2️⃣ 頂級深色優化視覺 CSS 樣板 (UI Lock-in)
 #   - 3️⃣ 系統全域常數與 Session 狀態初始化 (State Management)
-#   - 4️⃣ 側邊欄控制面板 (Sidebar Control Panel) - 🔥 V1.1.0 局部大幅更新
+#   - 4️⃣ 側邊欄控制面板 (Sidebar Control Panel) - 🔥 V1.2.0 補回 TW50 按鈕
 #   - 5️⃣ 主畫面分頁路由導覽 (Main Page Tab Navigation)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -126,7 +126,7 @@ div[data-testid="stRadio"] div[role="radiogroup"] { gap: 10px; }
 # ==========================================================
 # 3️⃣ 系統全域常數與 Session 狀態初始化
 # ==========================================================
-APP_VERSION = "QBS_v1.1.0"
+APP_VERSION = "QBS_v1.2.0"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 # 初始化 UI 狀態記憶 (Phase 1 骨架暫存)
@@ -134,7 +134,7 @@ if "monitoring" not in st.session_state:
     st.session_state.monitoring = False
 
 # ==========================================================
-# 4️⃣ 側邊欄控制面板 (依據 A 面向與新需求 D1, D2 構建 UI)
+# 4️⃣ 側邊欄控制面板
 # ==========================================================
 with st.sidebar:
     with st.container(border=True):
@@ -154,9 +154,15 @@ with st.sidebar:
         if st.session_state.monitoring: st.success("🟢 系統即時監測中...")
         else: st.info("🟡 監測暫停中")
     
-    # 2. 新增監測股票 (🔥 依據 image_0a41ae.png 截圖完美還原)
+    # 2. 新增監測股票 (🔥 補回 TW50 一鍵載入，並完美保留截圖還原 UI)
     with st.container(border=True):
         st.markdown("### ➕ 新增監測股票")
+        
+        # --- 區塊 0: 批次載入 TW50 ---
+        if st.button("📥 一鍵載入 TW50 清單", use_container_width=True):
+            st.toast("UI 測試：TW50 載入指令已觸發", icon="✅")
+            
+        st.markdown("<hr style='margin: 15px 0; border-color: #475569;'>", unsafe_allow_html=True)
         
         # --- 區塊 A: 從市場資料庫選取 ---
         st.markdown("<div style='color:#facc15; font-size:1.0rem; font-weight:700; margin-bottom:5px;'>📂 從市場資料庫選取</div>", unsafe_allow_html=True)
@@ -200,7 +206,7 @@ with st.sidebar:
         if st.button("🔄 手動立即刷新", use_container_width=True):
             st.rerun()
 
-    # 5. 手動推播測試 & 新需求 D2 (手動更新歷史資料)
+    # 5. 手動推播測試 & 強制更新
     with st.container(border=True):
         st.markdown("### 🛠️ 系統功能測試")
         if st.button("🚀 發送目前小卡狀態 (推播)", use_container_width=True):
