@@ -1,7 +1,19 @@
 # ==========================================================
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
-# 程式版本 : QBS_v2.1.1 (Phase 2: UI 視覺細節極致統一版)
-# 📋 說明 : 統一系統導航外框、同步頁面 A/B 的次級標題與操作區排版。
+# 專案名稱 : Quantitative Backtesting System (QBS)
+# 檔案名稱 : QBS_app.py
+# 程式版本 : QBS_v2.2.0 (Phase 2: 視覺元件一致性極致優化版)
+#
+# 📋 進版說明 (Version Notes):
+#   1. [優化] 將側邊欄「系統導航」使用 container 包覆，賦予圓角邊框，統一視覺重量。
+#   2. [優化] 重新排版頁面 A「回測填入」區塊，對齊頁面 B 次級標題標準，移除多餘分隔線與 Emoji 位置調整。
+#
+# 🏷️ 區塊說明 (Block Description):
+#   - 1️⃣ 頁面設定與全域配置
+#   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
+#   - 3️⃣ 系統全域常數與資料庫初始化
+#   - 4️⃣ 側邊欄控制面板 (🔥 V2.2.0 元件一致性優化)
+#   - 5️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -17,8 +29,16 @@ from core import data_fetcher
 # ==========================================================
 # 1️⃣ 頁面設定與全域配置
 # ==========================================================
-st.set_page_config(page_title="QBS 量化回測系統", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title="QBS 量化回測系統",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
+# ==========================================================
+# 2️⃣ 動態載入外部深色視覺 CSS 樣板
+# ==========================================================
 def load_css(file_path):
     if os.path.exists(file_path):
         with open(file_path, "r", encoding="utf-8") as f:
@@ -27,10 +47,12 @@ def load_css(file_path):
 load_css(os.path.join("assets", "style.css"))
 
 # ==========================================================
-# 2️⃣ 系統全域常數與初始化
+# 3️⃣ 系統全域常數與資料庫/Session 初始化
 # ==========================================================
-APP_VERSION = "QBS_v2.1.1"
+APP_VERSION = "QBS_v2.2.0"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
+
+# 精準絕對路徑防護
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 
@@ -38,15 +60,22 @@ if "db_initialized" not in st.session_state:
     db_manager.init_db()
     st.session_state.db_initialized = True
 
-if "monitoring" not in st.session_state: st.session_state.monitoring = False
+if "monitoring" not in st.session_state: 
+    st.session_state.monitoring = False
 
-test_display_map = {"2330.TW": "2330 台積電", "2454.TW": "2454 聯發科", "AAPL": "AAPL 蘋果", "NVDA": "NVDA 輝達"}
+# 預設測試用顯示字典
+test_display_map = {
+    "2330.TW": "2330 台積電",
+    "2454.TW": "2454 聯發科",
+    "AAPL": "AAPL 蘋果",
+    "NVDA": "NVDA 輝達"
+}
 
 # ==========================================================
-# 3️⃣ 側邊欄控制面板 (🔥 UI/UX 極致統一版)
+# 4️⃣ 側邊欄控制面板 (🔥 動態智能切換)
 # ==========================================================
 with st.sidebar:
-    # --- 系統導航 (已容器化) ---
+    # --- 總開關：分頁導航 (V2.2.0 加入 container 圓角邊框) ---
     with st.container(border=True):
         st.markdown("### 🧭 系統導航")
         current_page = st.radio("main_nav", ["📡 頁面 A : 即時雷達監測", "🎯 頁面 B : 策略回測戰情"], label_visibility="collapsed", key="main_page_nav")
@@ -66,38 +95,48 @@ with st.sidebar:
                 if st.button("開始", use_container_width=True, key="start_mon"): st.session_state.monitoring = True
             with col_btn2:
                 if st.button("暫停", use_container_width=True, key="stop_mon"): st.session_state.monitoring = False
+                    
             if st.session_state.monitoring: st.success("🟢 系統即時監測中...")
             else: st.info("🟡 監測暫停中")
             
         with st.container(border=True):
             st.markdown("### ➕ 新增實戰監控 (需設警報)")
             market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_a")
-            selected_db = st.selectbox("資料庫選取", ["--- 請選擇 ---", "2330.TW", "2454.TW", "AAPL", "NVDA"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_a")
-            new_sym = st.text_input("或 手動輸入代碼", value="", key="sym_manual_a").strip().upper()
-            th_text = st.text_input("提醒門檻 (%)", value="", key="th_a")
-            entry_text = st.text_input("進場提醒 ($)", value="", key="entry_a")
-            exit_text = st.text_input("出場提醒 ($)", value="", key="exit_a")
+            
+            if "台灣" in market_choice:
+                selected_db = st.selectbox("tw 資料庫選取", ["--- 請選擇 ---", "2330.TW", "2454.TW"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_tw_a")
+            else:
+                selected_db = st.selectbox("us 資料庫選取", ["--- 請選擇 ---", "AAPL", "NVDA"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_a")
+                
+            new_sym = st.text_input("或 手動輸入代碼", value="", placeholder="例: 2330", key="sym_manual_a").strip().upper()
+            th_text = st.text_input("提醒門檻 (%)", value="", placeholder="例: 5, 10", key="th_a")
+            entry_text = st.text_input("進場提醒 ($)", value="", placeholder="例: 150, 200", key="entry_a")
+            exit_text = st.text_input("出場提醒 ($)", value="", placeholder="例: 140, 190", key="exit_a")
             
             if st.button("確認新增至監測池", use_container_width=True, key="btn_add_a"):
                 target_sym = new_sym if new_sym else (selected_db if selected_db != "--- 請選擇 ---" else None)
                 if target_sym:
                     if target_sym[0].isdigit() and ".TW" not in target_sym: target_sym += ".TW"
-                    mkt = "tw" if ".TW" in target_sym else "us"
+                    mkt = "tw" if "台灣" in market_choice or ".TW" in target_sym else "us"
                     db_manager.add_monitor_item(target_sym, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
+                    st.success(f"✅ 已將 {target_sym} 加入實戰監測！")
                     st.rerun()
             
-            # 🔥 V2.1.1 對齊頁面 B 風格
+            # 🔥 V2.2.0 優化：對齊頁面 B 次級標題標準
             st.markdown("<hr style='margin: 10px 0; border-color: #475569;'>", unsafe_allow_html=True)
             st.markdown("<div style='color:#a78bfa; font-size:0.9rem; font-weight:700; margin-bottom:5px;'>📥 回測填入</div>", unsafe_allow_html=True)
+            
             if st.button("策略回測高分股票", use_container_width=True, key="btn_import_a"):
-                st.toast("開發中：讀取高分名單...", icon="🚧")
+                st.toast("開發中：未來將自動讀取引擎算出的高分名單", icon="🚧")
                     
         with st.container(border=True):
             st.markdown("### 🗑️ 移除監測清單")
             del_sym = st.selectbox("刪除目標", ["--- 請選擇 ---"] + monitor_tickers, format_func=lambda x: monitor_map.get(x, x) if x != "--- 請選擇 ---" else x, key="del_a")
             if st.button("確認刪除", use_container_width=True, key="btn_del_a"):
                 if del_sym != "--- 請選擇 ---":
-                    db_manager.remove_monitor_item(del_sym); st.rerun()
+                    db_manager.remove_monitor_item(del_sym)
+                    st.success(f"🗑️ 已移除 {monitor_map.get(del_sym, del_sym)}")
+                    st.rerun()
 
     # ==========================================
     # 🌟 頁面 B 專屬側邊欄 (Backtest)
@@ -109,45 +148,117 @@ with st.sidebar:
         
         with st.container(border=True):
             st.markdown("### 🧪 回測策略設定")
-            strategy = st.selectbox("選擇回測策略", ["TW50 經典策略 (預設)"])
+            strategy = st.selectbox("選擇回測策略", ["TW50 經典策略 (預設)", "RSI 動能策略 (待開發)"])
             
         with st.container(border=True):
-            st.markdown("### ➕ 新增回測母體")
-            new_sym = st.text_input("輸入股票代碼", value="", key="sym_manual_b").strip().upper()
+            st.markdown("### ➕ 新增回測母體 (免設警報)")
+            market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_b")
+            new_sym = st.text_input("輸入股票代碼", value="", placeholder="例: AAPL 或 2330", key="sym_manual_b").strip().upper()
+            
             if st.button("確認新增至回測池", use_container_width=True, key="btn_add_b"):
                 if new_sym:
                     if new_sym[0].isdigit() and ".TW" not in new_sym: new_sym += ".TW"
-                    db_manager.add_backtest_item(new_sym, market="tw" if ".TW" in new_sym else "us"); st.rerun()
+                    mkt = "tw" if "台灣" in market_choice or ".TW" in new_sym else "us"
+                    db_manager.add_backtest_item(new_sym, market=mkt)
+                    st.success(f"✅ 已將 {new_sym} 加入回測母體！")
+                    st.rerun()
                     
             st.markdown("<hr style='margin: 10px 0; border-color: #475569;'>", unsafe_allow_html=True)
             st.markdown("<div style='color:#a78bfa; font-size:0.9rem; font-weight:700; margin-bottom:5px;'>🗂️ 族群批次輸入</div>", unsafe_allow_html=True)
-            if st.button("確認批次輸入", use_container_width=True, key="btn_sector_add"): st.rerun()
+            sector_options = ["--- 請選擇 ---"]
+            sectors_data = {}
+            sector_file = os.path.join(BASE_DIR, "config", "sectors.json")
+            if os.path.exists(sector_file):
+                with open(sector_file, "r", encoding="utf-8") as f:
+                    try:
+                        sectors_data = json.load(f)
+                        sector_options.extend(list(sectors_data.keys()))
+                    except Exception: pass
+            
+            selected_sector = st.selectbox("選擇族群", sector_options, key="sector_sel")
+            if st.button("確認批次輸入", use_container_width=True, key="btn_sector_add"):
+                if selected_sector != "--- 請選擇 ---":
+                    tickers_to_add = sectors_data.get(selected_sector, [])
+                    for t in tickers_to_add:
+                        mkt = "tw" if ".TW" in t else "us"
+                        db_manager.add_backtest_item(t, market=mkt)
+                    st.success(f"✅ 已批次寫入 {len(tickers_to_add)} 檔標的！")
+                    st.rerun()
 
         with st.container(border=True):
             st.markdown("### 🗑️ 移除回測清單")
             del_sym = st.selectbox("刪除目標", ["--- 請選擇 ---"] + backtest_tickers, format_func=lambda x: backtest_map.get(x, x) if x != "--- 請選擇 ---" else x, key="del_b")
             if st.button("確認刪除", use_container_width=True, key="btn_del_b"):
-                if del_sym != "--- 請選擇 ---": db_manager.remove_backtest_item(del_sym); st.rerun()
+                if del_sym != "--- 請選擇 ---":
+                    db_manager.remove_backtest_item(del_sym)
+                    st.success(f"🗑️ 已移除 {backtest_map.get(del_sym, del_sym)}")
+                    st.rerun()
 
         with st.container(border=True):
             st.markdown("### 📥 歷史資料庫管理")
             if st.button("強制更新 5 年歷史資料", use_container_width=True):
-                with st.spinner('🔄 下載中...'):
-                    data_fetcher.smart_update_historical_data(tickers=backtest_tickers, force_5y=True); st.rerun()
+                if not backtest_tickers:
+                    st.warning("⚠️ 回測池目前為空，請先新增股票！")
+                else:
+                    with st.spinner('🔄 正在向 Yahoo 請求 K 線資料...'):
+                        success = data_fetcher.smart_update_historical_data(tickers=backtest_tickers, force_5y=True)
+                        if success:
+                            st.success("✅ 回測母體歷史資料更新完成！")
+                            st.rerun()
+                        else:
+                            st.error("⚠️ 更新失敗，請檢查網路狀態。")
 
-    # (底部資訊略...)
-    st.markdown(f"<div style='text-align:center; padding:10px; color:#94a3b8; font-size:0.8rem;'>{APP_VERSION}</div>", unsafe_allow_html=True)
+    # ==========================================
+    # 🌟 共用底部區塊
+    # ==========================================
+    with st.container(border=True):
+        st.markdown("### ⏱️ 網頁刷新頻率")
+        refresh_sec = st.slider("秒", 5, 60, 30, label_visibility="collapsed")
+        if st.button("🔄 手動立即刷新", use_container_width=True): st.rerun()
+
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    tpe_now = now_utc.astimezone(TAIPEI_TZ)
+    tpe_time_str = tpe_now.strftime("%H:%M:%S %m/%d/%Y")
+    
+    st.markdown(
+        f"""
+        <div style="background-color:#1e293b; padding:12px; border-radius:8px; border:1px solid #475569; text-align:center; margin-top:15px; margin-bottom:15px;">
+            <div style="color:#94a3b8; font-size:0.8rem; font-weight:600; margin-bottom:4px;">系統當前版本</div>
+            <div style="color:#38bdf8; font-size:1.1rem; font-weight:700; margin-bottom:10px;">{APP_VERSION}</div>
+            <div style="color:#94a3b8; font-size:0.8rem; font-weight:600; margin-bottom:8px;">🕒 系統當前時間</div>
+            <div style="color:#f1f5f9; font-size:0.88rem; font-weight:600; margin-bottom:2px;">Tw {tpe_time_str}</div>
+        </div>
+        """, unsafe_allow_html=True
+    )
 
 # ==========================================================
-# 5️⃣ 主畫面 (純粹展示區)
+# 5️⃣ 主畫面戰情室 (🔥 A/B 雙軌視圖)
 # ==========================================================
 st.markdown('<h1 class="main-title">📈 Quantitative Backtesting System (QBS)</h1>', unsafe_allow_html=True)
+
 if current_page == "📡 頁面 A : 即時雷達監測":
     st.markdown("### 📡 實戰雷達監測 (Execution Battlefield)")
-    st.info(f"💡 實戰彈藥庫目前共有 **{len(db_manager.get_all_monitor_items())}** 檔監測標的。")
+    monitor_items = db_manager.get_all_monitor_items()
+    clean_names = [item['display_name'] for item in monitor_items]
+    
+    st.info(f"💡 實戰彈藥庫目前共有 **{len(monitor_items)}** 檔監測標的：{', '.join(clean_names) if clean_names else '尚未新增'}")
+            
 elif current_page == "🎯 頁面 B : 策略回測戰情":
     st.markdown("### 🎯 策略回測戰情室 (The Research Hub)")
-    count = 0
-    if os.path.exists(DB_PATH):
-        with sqlite3.connect(DB_PATH) as conn: count = conn.cursor().execute("SELECT COUNT(*) FROM daily_price").fetchone()[0]
-    st.success(f"📊 **歷史資料庫實時狀態**：系統已儲存了 **{count:,}** 筆 K 線資料。")
+    
+    backtest_items = db_manager.get_all_backtest_items()
+    clean_names = [item['display_name'] for item in backtest_items]
+    st.info(f"🧪 回測母體目前共有 **{len(backtest_items)}** 檔研究標的：{', '.join(clean_names) if clean_names else '尚未新增'}")
+    
+    total_k_lines = 0
+    try:
+        if os.path.exists(DB_PATH):
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM daily_price")
+                result = cursor.fetchone()
+                total_k_lines = result[0] if result else 0
+    except Exception as e:
+        st.error(f"資料庫連線錯誤: {e}")
+
+    st.success(f"📊 **歷史資料庫實時狀態**：系統已成功下載並儲存了 **{total_k_lines:,}** 筆 K 線資料。")
