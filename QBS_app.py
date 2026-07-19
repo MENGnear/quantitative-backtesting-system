@@ -2,19 +2,19 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v2.0.0 (Phase 2: A/B 雙軌動態側邊欄重構)
+# 程式版本 : QBS_v2.1.0 (Phase 2: UI/UX 深度優化版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [重構] 實作動態側邊欄：分頁導航移至側邊欄頂部，依據當前頁面渲染對應的控制面板。
-#   2. [重構] 資料分流：頁面 A 對接 monitor_pool；頁面 B 對接 backtest_pool。
-#   3. [修復] 修正 DB_PATH 絕對路徑，解決 K 線總筆數顯示為 0 的 Bug，並移至頁面 B 顯示。
+#   1. [優化] 清理頁面 A 主畫面，移除匯入按鈕，保留純粹的戰情室空間。
+#   2. [優化] 側邊欄頁面 A 新增「回測填入」視覺區塊與分隔線，整合高分股匯入按鈕。
+#   3. [維持] A/B 雙軌動態側邊欄與資料庫分流邏輯。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
 #   - 3️⃣ 系統全域常數與資料庫初始化
-#   - 4️⃣ 側邊欄控制面板 (🔥 動態智能切換)
-#   - 5️⃣ 主畫面戰情室 (🔥 A/B 雙軌視圖)
+#   - 4️⃣ 側邊欄控制面板 (🔥 V2.1.0 完美排版優化)
+#   - 5️⃣ 主畫面戰情室 (🔥 V2.1.0 純粹視覺化空間)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -50,10 +50,10 @@ load_css(os.path.join("assets", "style.css"))
 # ==========================================================
 # 3️⃣ 系統全域常數與資料庫/Session 初始化
 # ==========================================================
-APP_VERSION = "QBS_v2.0.0"
+APP_VERSION = "QBS_v2.1.0"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
-# 🔥 精準絕對路徑防護，解決 0 筆 Bug
+# 精準絕對路徑防護，解決 0 筆 Bug
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 
@@ -122,6 +122,14 @@ with st.sidebar:
                     db_manager.add_monitor_item(target_sym, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
                     st.success(f"✅ 已將 {target_sym} 加入實戰監測！")
                     st.rerun()
+            
+            # 🔥 V2.1.0 新增：回測高分股匯入區塊
+            st.markdown("<hr style='margin: 12px 0; border-color: #475569;'>", unsafe_allow_html=True)
+            st.markdown("<div style='text-align: center; color: #94a3b8; font-size: 0.9rem; font-weight: 700;'>回測填入</div>", unsafe_allow_html=True)
+            st.markdown("<hr style='margin: 12px 0; border-color: #475569;'>", unsafe_allow_html=True)
+            
+            if st.button("📥 策略回測高分股", use_container_width=True, key="btn_import_a"):
+                st.toast("開發中：未來將自動讀取引擎算出的高分名單", icon="🚧")
                     
         with st.container(border=True):
             st.markdown("### 🗑️ 移除監測清單")
@@ -195,7 +203,6 @@ with st.sidebar:
                     st.warning("⚠️ 回測池目前為空，請先新增股票！")
                 else:
                     with st.spinner('🔄 正在向 Yahoo 請求 K 線資料...'):
-                        # 🔥 關鍵：將回測池的代碼傳給爬蟲，精準下載
                         success = data_fetcher.smart_update_historical_data(tickers=backtest_tickers, force_5y=True)
                         if success:
                             st.success("✅ 回測母體歷史資料更新完成！")
@@ -236,12 +243,8 @@ if current_page == "📡 頁面 A : 即時雷達監測":
     monitor_items = db_manager.get_all_monitor_items()
     clean_names = [item['display_name'] for item in monitor_items]
     
+    # 🔥 V2.1.0 優化：移除主畫面按鈕，維持乾淨的監測空間
     st.info(f"💡 實戰彈藥庫目前共有 **{len(monitor_items)}** 檔監測標的：{', '.join(clean_names) if clean_names else '尚未新增'}")
-    
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("📥 從回測戰情室匯入高分標的", use_container_width=True):
-            st.toast("開發中：未來將自動讀取引擎算出的高分名單", icon="🚧")
             
 elif current_page == "🎯 頁面 B : 策略回測戰情":
     st.markdown("### 🎯 策略回測戰情室 (The Research Hub)")
@@ -250,7 +253,6 @@ elif current_page == "🎯 頁面 B : 策略回測戰情":
     clean_names = [item['display_name'] for item in backtest_items]
     st.info(f"🧪 回測母體目前共有 **{len(backtest_items)}** 檔研究標的：{', '.join(clean_names) if clean_names else '尚未新增'}")
     
-    # 🔥 精準路徑讀取 K 線總筆數
     total_k_lines = 0
     try:
         if os.path.exists(DB_PATH):
