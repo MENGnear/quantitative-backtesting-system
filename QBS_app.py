@@ -2,19 +2,19 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v1.7.0 (Phase 2: 市場資料庫選取 UI 顯示優化)
+# 程式版本 : QBS_v1.8.0 (Phase 2: 資料下載器 UI 整合與狀態顯示)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [優化] 依據【討論24】，為「從市場資料庫選取」的下拉選單加入 display_map 與 format_func。
-#   2. [功能] 畫面上顯示乾淨的中文/企業名稱，底層仍精準傳遞帶有 .TW 的代碼寫入資料庫。
-#   3. [維持] 保留前版所有的 CSS 外部讀取、族群 JSON 批次匯入與 .TW 防呆邏輯。
+#   1. [整合] 匯入 core.data_fetcher，將側邊欄強制更新按鈕正式綁定下載邏輯。
+#   2. [優化] 加入 st.spinner 狀態提示，防止使用者在下載期間重複點擊。
+#   3. [新增] 頁面 A 新增資料庫 K 線總筆數統計，方便直接在網頁上視覺化驗證下載成果。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 頁面設定與全域配置 (Page Config)
-#   - 2️⃣ 動態載入外部深色視覺 CSS 樣板 (Load External CSS)
-#   - 3️⃣ 系統全域常數與資料庫初始化 (State & DB Management)
-#   - 4️⃣ 側邊欄控制面板 (Sidebar Control Panel) - 🔥 V1.7.0 市場選取區塊顯示優化
-#   - 5️⃣ 主畫面分頁路由導覽 (Main Page Tab Navigation)
+#   - 1️⃣ 頁面設定與全域配置
+#   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
+#   - 3️⃣ 系統全域常數與資料庫/Session 初始化
+#   - 4️⃣ 側邊欄控制面板 - 🔥 V1.8.0 按鈕整合資料庫更新功能
+#   - 5️⃣ 主畫面分頁路由導覽 - 🔥 V1.8.0 新增 K 線筆數統計顯示
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -23,7 +23,9 @@ import datetime
 import pytz
 import os
 import json
+import sqlite3
 from core import db_manager
+from core import data_fetcher  # 🔥 V1.8.0 新增匯入爬蟲模組
 
 # ==========================================================
 # 1️⃣ 頁面設定與全域配置
@@ -50,8 +52,11 @@ load_css(os.path.join("assets", "style.css"))
 # ==========================================================
 # 3️⃣ 系統全域常數與資料庫/Session 初始化
 # ==========================================================
-APP_VERSION = "QBS_v1.7.0"
+APP_VERSION = "QBS_v1.8.0"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
+
+# 資料庫路徑 (供 UI 直接查詢筆數使用)
+DB_PATH = os.path.join(os.path.dirname(__file__), "database", "stock_system.db")
 
 if "db_initialized" not in st.session_state:
     db_manager.init_db()
@@ -60,7 +65,7 @@ if "db_initialized" not in st.session_state:
 if "monitoring" not in st.session_state: 
     st.session_state.monitoring = False
 
-# 撈取資料庫清單，並建立代碼與顯示名稱的對映字典供「移除清單」使用
+# 撈取資料庫清單，並建立代碼與顯示名稱的對映字典
 current_watchlist = db_manager.get_all_watchlist()
 watchlist_tickers = [item['ticker'] for item in current_watchlist]
 watchlist_display_map = {item['ticker']: item['display_name'] for item in current_watchlist}
@@ -94,7 +99,6 @@ with st.sidebar:
         st.markdown("<div style='color:#facc15; font-size:1.0rem; font-weight:700; margin-bottom:5px;'>📂 從市場資料庫選取</div>", unsafe_allow_html=True)
         market_choice = st.radio("選擇市場分類", ["tw 台灣", "us 美國"], horizontal=True, label_visibility="collapsed")
         
-        # 🔥 V1.7.0 新增測試用顯示字典
         test_display_map = {
             "2330.TW": "2330 台積電",
             "2454.TW": "2454 聯發科",
@@ -138,12 +142,10 @@ with st.sidebar:
         
         if st.button("確認輸入 ", use_container_width=True, key="btn_manual_add"): 
             if new_sym:
-                # 實作 .TW 防呆邏輯：首字為數字且無 .TW 則自動補齊
                 if new_sym[0].isdigit() and ".TW" not in new_sym: 
                     new_sym += ".TW"
                     
                 mkt = "tw" if ".TW" in new_sym else "us"
-                # 依賴底層 db_manager 自動處理命名與防呆
                 db_manager.add_watchlist_item(new_sym, market=mkt, thresholds=th_text_manual, entry_prices=entry_text_manual, exit_prices=exit_text_manual)
                 st.success(f"✅ 已送出 {new_sym}，系統將自動解析名稱並加入資料庫！")
                 st.rerun()
@@ -159,7 +161,6 @@ with st.sidebar:
         sectors_data = {}
         sector_file = os.path.join("config", "sectors.json")
         
-        # 動態讀取 JSON 族群設定檔
         if os.path.exists(sector_file):
             with open(sector_file, "r", encoding="utf-8") as f:
                 try:
@@ -201,13 +202,21 @@ with st.sidebar:
         if st.button("🔄 手動立即刷新", use_container_width=True):
             st.rerun()
 
-    # 5. 手動推播測試 & 強制更新
+    # 5. 手動推播測試 & 強制更新 (🔥 V1.8.0 綁定下載大腦)
     with st.container(border=True):
         st.markdown("### 🛠️ 系統功能測試")
         if st.button("🚀 發送目前小卡狀態 (推播)", use_container_width=True):
             st.toast("UI 測試：推播指令已觸發", icon="✅")
+            
         if st.button("📥 強制更新 5 年歷史資料", use_container_width=True):
-            st.toast("UI 測試：資料庫更新指令已觸發", icon="✅")
+            # 顯示載入中的圈圈
+            with st.spinner('🔄 正在向 Yahoo 請求 K 線資料，為避免防拷機制請耐心稍候...'):
+                success = data_fetcher.smart_update_historical_data(force_5y=True)
+                if success:
+                    st.success("✅ 5 年歷史資料更新完成！")
+                    st.rerun()  # 更新完畢後重新整理網頁，讓右側筆數立即跳動
+                else:
+                    st.error("⚠️ 更新失敗，請檢查網路或查看終端機日誌。")
 
     # 6. 系統當前版本
     now_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -235,8 +244,21 @@ current_page = st.radio("main_nav", ["📡 頁面 A : 即時雷達監測", "🎯
 if current_page == "📡 頁面 A : 即時雷達監測":
     st.markdown("### 📡 即時雷達監測 (Monitor)")
     
+    # 🔥 V1.8.0 查詢並顯示資料庫內目前累積的 K 線筆數
+    total_k_lines = 0
+    try:
+        if os.path.exists(DB_PATH):
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM daily_price")
+                result = cursor.fetchone()
+                total_k_lines = result[0] if result else 0
+    except Exception:
+        pass
+
     clean_names = [watchlist_display_map.get(t, t) for t in watchlist_tickers]
     st.info(f"💡 目前資料庫共有 {len(watchlist_tickers)} 檔監測標的：{', '.join(clean_names)}")
+    st.success(f"📊 **資料庫實時狀態**：系統已成功下載並儲存了 **{total_k_lines:,}** 筆歷史 K 線資料。")
 
 elif current_page == "🎯 頁面 B : 策略回測戰情":
     st.markdown("### 🎯 策略回測戰情 (TW50)")
