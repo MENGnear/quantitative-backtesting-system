@@ -2,18 +2,19 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v2.2.0 (Phase 2: 視覺元件一致性極致優化版)
+# 程式版本 : QBS_v3.0.0 (Phase 3: 策略引擎與 UI 渲染整合版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [優化] 將側邊欄「系統導航」使用 container 包覆，賦予圓角邊框，統一視覺重量。
-#   2. [優化] 重新排版頁面 A「回測填入」區塊，對齊頁面 B 次級標題標準，移除多餘分隔線與 Emoji 位置調整。
+#   1. [新增] 引入 ui_strategy 模組，串接通用核心引擎 (engine_core)。
+#   2. [重構] 頁面 B 主畫面全面交由 ui_strategy.render_backtest_dashboard() 接管，渲染動態網格小卡。
+#   3. [維持] A/B 雙軌動態側邊欄與資料庫分流邏輯。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
 #   - 3️⃣ 系統全域常數與資料庫初始化
-#   - 4️⃣ 側邊欄控制面板 (🔥 V2.2.0 元件一致性優化)
-#   - 5️⃣ 主畫面戰情室
+#   - 4️⃣ 側邊欄控制面板
+#   - 5️⃣ 主畫面戰情室 (🔥 V3.0.0 對接 UI 渲染模組)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -25,6 +26,7 @@ import json
 import sqlite3
 from core import db_manager
 from core import data_fetcher
+import ui_strategy  # 👈 Phase 3 新增：引入戰情小卡渲染模組
 
 # ==========================================================
 # 1️⃣ 頁面設定與全域配置
@@ -49,7 +51,7 @@ load_css(os.path.join("assets", "style.css"))
 # ==========================================================
 # 3️⃣ 系統全域常數與資料庫/Session 初始化
 # ==========================================================
-APP_VERSION = "QBS_v2.2.0"
+APP_VERSION = "QBS_v3.0.0"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 # 精準絕對路徑防護
@@ -75,7 +77,7 @@ test_display_map = {
 # 4️⃣ 側邊欄控制面板 (🔥 動態智能切換)
 # ==========================================================
 with st.sidebar:
-    # --- 總開關：分頁導航 (V2.2.0 加入 container 圓角邊框) ---
+    # --- 總開關：分頁導航 ---
     with st.container(border=True):
         st.markdown("### 🧭 系統導航")
         current_page = st.radio("main_nav", ["📡 頁面 A : 即時雷達監測", "🎯 頁面 B : 策略回測戰情"], label_visibility="collapsed", key="main_page_nav")
@@ -122,7 +124,6 @@ with st.sidebar:
                     st.success(f"✅ 已將 {target_sym} 加入實戰監測！")
                     st.rerun()
             
-            # 🔥 V2.2.0 優化：對齊頁面 B 次級標題標準
             st.markdown("<hr style='margin: 10px 0; border-color: #475569;'>", unsafe_allow_html=True)
             st.markdown("<div style='color:#a78bfa; font-size:0.9rem; font-weight:700; margin-bottom:5px;'>📥 回測填入</div>", unsafe_allow_html=True)
             
@@ -148,7 +149,7 @@ with st.sidebar:
         
         with st.container(border=True):
             st.markdown("### 🧪 回測策略設定")
-            strategy = st.selectbox("選擇回測策略", ["TW50 經典策略 (預設)", "RSI 動能策略 (待開發)"])
+            strategy = st.selectbox("選擇回測策略", ["趨勢動能策略 (Trend Momentum)", "均值回歸策略 (待開發)"])
             
         with st.container(border=True):
             st.markdown("### ➕ 新增回測母體 (免設警報)")
@@ -244,21 +245,5 @@ if current_page == "📡 頁面 A : 即時雷達監測":
     st.info(f"💡 實戰彈藥庫目前共有 **{len(monitor_items)}** 檔監測標的：{', '.join(clean_names) if clean_names else '尚未新增'}")
             
 elif current_page == "🎯 頁面 B : 策略回測戰情":
-    st.markdown("### 🎯 策略回測戰情室 (The Research Hub)")
-    
-    backtest_items = db_manager.get_all_backtest_items()
-    clean_names = [item['display_name'] for item in backtest_items]
-    st.info(f"🧪 回測母體目前共有 **{len(backtest_items)}** 檔研究標的：{', '.join(clean_names) if clean_names else '尚未新增'}")
-    
-    total_k_lines = 0
-    try:
-        if os.path.exists(DB_PATH):
-            with sqlite3.connect(DB_PATH) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM daily_price")
-                result = cursor.fetchone()
-                total_k_lines = result[0] if result else 0
-    except Exception as e:
-        st.error(f"資料庫連線錯誤: {e}")
-
-    st.success(f"📊 **歷史資料庫實時狀態**：系統已成功下載並儲存了 **{total_k_lines:,}** 筆 K 線資料。")
+    # 🔥 Phase 3: 直接呼叫 UI 渲染模組展示小卡矩陣
+    ui_strategy.render_backtest_dashboard()
