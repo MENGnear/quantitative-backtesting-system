@@ -2,12 +2,11 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.1.1 (Phase 4: 報價模組強固與效能修復版)
+# 程式版本 : monitor_v1.1.2 (Phase 4: 批次多線程防卡死版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [修復] 將 yfinance 報價獲取區間由 5d 擴展為 1mo，避免連假無昨收價可算。
-#   2. [優化] 強制轉換數值型別 (float)，避免 Pandas Series 結構導致 UI 渲染卡死。
-#   3. [效能] run_radar_scan 一次性回傳 (quotes, alerts)，徹底消除 UI 重複請求導致的 API 阻塞。
+#   1. [核心修復] 捨棄 Ticker 迴圈，改用 yf.download 批次多線程下載，大幅提升速度並避免單一標的卡死。
+#   2. [容錯處理] 自動適配 yfinance 單檔/多檔回傳結構，過濾無效代碼。
 # ==========================================================
 
 import sqlite3
@@ -35,37 +34,50 @@ def get_monitor_targets():
         return pd.read_sql_query("SELECT * FROM monitor_pool", conn)
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組
+# 2️⃣ 高頻報價與資料解析模組 (🔥 V1.1.2 全新改寫)
 # ==========================================================
 def fetch_realtime_quotes(tickers):
-    """極速獲取最新收盤價與昨收價，並計算漲跌幅"""
+    """使用批次下載，徹底解決迴圈卡死與連線掛起問題"""
     quotes = {}
-    for ticker in tickers:
-        try:
-            # 擴大範圍至 1 個月，確保無論如何都能抓到至少 2 個交易日
-            df = yf.Ticker(ticker).history(period="1mo")
+    if not tickers:
+        return quotes
+        
+    try:
+        # 使用 yf.download 批次抓取近 7 天資料，關閉終端機進度條干擾
+        data = yf.download(tickers, period="7d", progress=False, threads=True)
+        if data.empty:
+            return quotes
             
-            if not df.empty and len(df) >= 2:
-                # 強制轉為 float，避免 Pandas 格式污染
-                current_price = float(df['Close'].iloc[-1])
-                prev_price = float(df['Close'].iloc[-2])
-                
-                # 計算漲跌幅
-                if prev_price > 0:
-                    change_pct = ((current_price - prev_price) / prev_price) * 100
+        # 判定回傳的是單檔(SingleIndex)還是多檔(MultiIndex)
+        is_multi = isinstance(data.columns, pd.MultiIndex)
+        
+        for ticker in tickers:
+            try:
+                if is_multi:
+                    # 檢查該 ticker 是否在資料中
+                    if 'Close' in data and ticker in data['Close']:
+                        series = data['Close'][ticker].dropna()
+                    else:
+                        continue
                 else:
-                    change_pct = 0.0
+                    series = data['Close'].dropna()
+
+                if len(series) >= 2:
+                    curr = float(series.iloc[-1])
+                    prev = float(series.iloc[-2])
+                    change_pct = ((curr - prev) / prev * 100) if prev > 0 else 0.0
                     
-                quotes[ticker] = {
-                    'current': round(current_price, 2),
-                    'prev': round(prev_price, 2),
-                    'change_pct': round(change_pct, 2)
-                }
-            else:
-                logging.warning(f"⚠️ [{ticker}] 歷史資料不足 2 天，無法計算報價與漲跌幅。")
-        except Exception as e:
-            logging.error(f"❌ 獲取 [{ticker}] 報價失敗: {e}")
-            
+                    quotes[ticker] = {
+                        'current': round(curr, 2),
+                        'prev': round(prev, 2),
+                        'change_pct': round(change_pct, 2)
+                    }
+            except Exception as inner_e:
+                logging.warning(f"⚠️ 解析 [{ticker}] 報價失敗: {inner_e}")
+                
+    except Exception as e:
+        logging.error(f"❌ 批次獲取報價發生嚴重錯誤: {e}")
+        
     return quotes
 
 def parse_custom_values(val_str):
@@ -140,14 +152,11 @@ def evaluate_alerts(row, quote):
 # 4️⃣ 引擎主程序 (雷達掃描)
 # ==========================================================
 def run_radar_scan():
-    """執行一次完整的雷達掃描，回傳 (即時報價字典, 觸發的警報清單)"""
     targets_df = get_monitor_targets()
     if targets_df.empty:
         return {}, []
 
     tickers = targets_df['ticker'].tolist()
-    
-    # 全局只向 Yahoo 請求一次，徹底解決卡死問題
     quotes = fetch_realtime_quotes(tickers)
     
     all_triggered_alerts = []
