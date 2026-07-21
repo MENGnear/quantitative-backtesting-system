@@ -2,18 +2,17 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.1.0 (Phase 4.1: 自動名稱爬取與顯示優化)
+# 程式版本 : QBS_v4.1.1 (Phase 4.1: 奇摩股市在地化抓名)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [新增功能] 在手動新增股票至雷達時，自動呼叫 yfinance 爬取中文名稱 (shortName)。
-#   2. [資料庫強化] 將爬取到的正確名稱強制寫入 SQLite display_name 欄位，解決「2330.TW 2330.TW」名稱重複問題。
-#   3. [防護] 保留過往所有的雙軌架構與歷史回測介面。
+#   1. [新增功能] 導入 MON 版本在地化邏輯：台股改向 Yahoo 奇摩網頁爬取在地中文名，美股維持 yfinance。
+#   2. [防護機制] 加入 requests 與 re 正則表達式，確保抓名過程極速且不會引發系統崩潰。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
 #   - 3️⃣ 系統全域常數與資料庫初始化
-#   - 4️⃣ 側邊欄控制面板 (🔥 V4.1.0 新增自動查名邏輯)
+#   - 4️⃣ 側邊欄控制面板 (🔥 V4.1.1 更新：台美股分流命名機制)
 #   - 5️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -24,7 +23,9 @@ import pytz
 import os
 import json
 import sqlite3
-import yfinance as yf  # 👈 Phase 4.1 新增：用於新增股票時查詢名稱
+import yfinance as yf
+import requests  # 👈 Phase 4.1.1 新增：用於奇摩股市網頁請求
+import re        # 👈 Phase 4.1.1 新增：用於精準擷取中文名稱
 from core import db_manager
 from core import data_fetcher
 import ui_strategy
@@ -53,7 +54,7 @@ load_css(os.path.join("assets", "style.css"))
 # ==========================================================
 # 3️⃣ 系統全域常數與資料庫/Session 初始化
 # ==========================================================
-APP_VERSION = "QBS_v4.1.0"
+APP_VERSION = "QBS_v4.1.1"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -87,7 +88,6 @@ with st.sidebar:
     if current_page == "📡 頁面 A : 即時雷達監測":
         monitor_items = db_manager.get_all_monitor_items()
         monitor_tickers = [item['ticker'] for item in monitor_items]
-        # 下拉選單顯示資料庫裡的漂亮名稱 (例如: 6531.TW 愛普*)
         monitor_map = {item['ticker']: f"{item['ticker']} {item['display_name']}" for item in monitor_items}
         
         with st.container(border=True):
@@ -121,20 +121,32 @@ with st.sidebar:
                     if target_sym[0].isdigit() and ".TW" not in target_sym: target_sym += ".TW"
                     mkt = "tw" if "台灣" in market_choice or ".TW" in target_sym else "us"
                     
-                    # 🔥 V4.1.0 核心新增：自動向 Yahoo 查詢中文名稱
                     display_name = target_sym
                     with st.spinner(f"🔍 正在獲取 {target_sym} 名稱資訊..."):
-                        try:
-                            info = yf.Ticker(target_sym).info
-                            fetched_name = info.get('shortName') or info.get('longName')
-                            if fetched_name:
-                                display_name = fetched_name
-                        except Exception:
-                            pass # 若抓取失敗則退回使用代碼
+                        # 🔥 V4.1.1 核心新增：台美股分流命名機制 (還原 MON 邏輯)
+                        if mkt == "tw":
+                            try:
+                                headers = {'User-Agent': 'Mozilla/5.0'}
+                                res = requests.get(f"https://tw.stock.yahoo.com/quote/{target_sym}", headers=headers, timeout=5)
+                                if res.status_code == 200:
+                                    # 尋找 <title>愛普*(6531.TW) - Yahoo!奇摩股市</title> 格式
+                                    match = re.search(r'<title>(.*?)\(', res.text)
+                                    if match:
+                                        display_name = match.group(1).strip()
+                            except Exception:
+                                pass # 失敗則退回使用代碼
+                        else:
+                            try:
+                                info = yf.Ticker(target_sym).info
+                                fetched_name = info.get('shortName') or info.get('longName')
+                                if fetched_name:
+                                    display_name = fetched_name
+                            except Exception:
+                                pass
                     
                     db_manager.add_monitor_item(target_sym, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
                     
-                    # 強制更新資料庫的 display_name，解決名稱重複問題
+                    # 強制更新資料庫的 display_name
                     with sqlite3.connect(DB_PATH) as conn:
                         conn.execute("UPDATE monitor_pool SET display_name = ? WHERE ticker = ?", (display_name, target_sym))
                         
