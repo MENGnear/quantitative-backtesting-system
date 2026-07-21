@@ -2,11 +2,12 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.1.0 (Phase 4: 報價模組強固版)
+# 程式版本 : monitor_v1.1.1 (Phase 4: 報價模組強固與效能修復版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [修復] 將 yfinance 報價獲取區間由 5d 擴展為 1mo，避免連假導致無昨收價可算的問題。
+#   1. [修復] 將 yfinance 報價獲取區間由 5d 擴展為 1mo，避免連假無昨收價可算。
 #   2. [優化] 強制轉換數值型別 (float)，避免 Pandas Series 結構導致 UI 渲染卡死。
+#   3. [效能] run_radar_scan 一次性回傳 (quotes, alerts)，徹底消除 UI 重複請求導致的 API 阻塞。
 # ==========================================================
 
 import sqlite3
@@ -34,7 +35,7 @@ def get_monitor_targets():
         return pd.read_sql_query("SELECT * FROM monitor_pool", conn)
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組 (🔥 V1.1.0 修復區塊)
+# 2️⃣ 高頻報價與資料解析模組
 # ==========================================================
 def fetch_realtime_quotes(tickers):
     """極速獲取最新收盤價與昨收價，並計算漲跌幅"""
@@ -139,11 +140,14 @@ def evaluate_alerts(row, quote):
 # 4️⃣ 引擎主程序 (雷達掃描)
 # ==========================================================
 def run_radar_scan():
+    """執行一次完整的雷達掃描，回傳 (即時報價字典, 觸發的警報清單)"""
     targets_df = get_monitor_targets()
     if targets_df.empty:
-        return []
+        return {}, []
 
     tickers = targets_df['ticker'].tolist()
+    
+    # 全局只向 Yahoo 請求一次，徹底解決卡死問題
     quotes = fetch_realtime_quotes(tickers)
     
     all_triggered_alerts = []
@@ -154,11 +158,11 @@ def run_radar_scan():
             triggered = evaluate_alerts(row, quotes[ticker])
             all_triggered_alerts.extend(triggered)
             
-    return all_triggered_alerts
+    return quotes, all_triggered_alerts
 
 if __name__ == "__main__":
     print("📡 啟動即時雷達引擎掃描...")
-    alerts = run_radar_scan()
+    quotes, alerts = run_radar_scan()
     if alerts:
         print(f"\n🚨 發現 {len(alerts)} 筆觸發警報！")
         for a in alerts:
