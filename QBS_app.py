@@ -2,19 +2,19 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.0.0 (Phase 4: 雙軌 UI 戰情室完整整合版)
+# 程式版本 : QBS_v4.1.0 (Phase 4.1: 自動名稱爬取與顯示優化)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [新增] 引入 ui_monitor 模組，串接即時雷達警報引擎 (engine_monitor)。
-#   2. [重構] 頁面 A 主畫面全面交由 ui_monitor.render_radar_dashboard() 接管。
-#   3. [完成] 頁面 A (即時雷達) 與頁面 B (策略回測) 的視覺化與邏輯完全分離並獨立運作。
+#   1. [新增功能] 在手動新增股票至雷達時，自動呼叫 yfinance 爬取中文名稱 (shortName)。
+#   2. [資料庫強化] 將爬取到的正確名稱強制寫入 SQLite display_name 欄位，解決「2330.TW 2330.TW」名稱重複問題。
+#   3. [防護] 保留過往所有的雙軌架構與歷史回測介面。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
 #   - 3️⃣ 系統全域常數與資料庫初始化
-#   - 4️⃣ 側邊欄控制面板
-#   - 5️⃣ 主畫面戰情室 (🔥 V4.0.0 完成雙軌 UI 渲染模組串接)
+#   - 4️⃣ 側邊欄控制面板 (🔥 V4.1.0 新增自動查名邏輯)
+#   - 5️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -24,10 +24,11 @@ import pytz
 import os
 import json
 import sqlite3
+import yfinance as yf  # 👈 Phase 4.1 新增：用於新增股票時查詢名稱
 from core import db_manager
 from core import data_fetcher
 import ui_strategy
-import ui_monitor  # 👈 Phase 4 新增：引入即時雷達渲染模組
+import ui_monitor
 
 # ==========================================================
 # 1️⃣ 頁面設定與全域配置
@@ -52,10 +53,9 @@ load_css(os.path.join("assets", "style.css"))
 # ==========================================================
 # 3️⃣ 系統全域常數與資料庫/Session 初始化
 # ==========================================================
-APP_VERSION = "QBS_v4.0.0"
+APP_VERSION = "QBS_v4.1.0"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
-# 精準絕對路徑防護
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 
@@ -66,7 +66,6 @@ if "db_initialized" not in st.session_state:
 if "monitoring" not in st.session_state: 
     st.session_state.monitoring = False
 
-# 預設測試用顯示字典
 test_display_map = {
     "2330.TW": "2330 台積電",
     "2454.TW": "2454 聯發科",
@@ -78,7 +77,6 @@ test_display_map = {
 # 4️⃣ 側邊欄控制面板 (🔥 動態智能切換)
 # ==========================================================
 with st.sidebar:
-    # --- 總開關：分頁導航 ---
     with st.container(border=True):
         st.markdown("### 🧭 系統導航")
         current_page = st.radio("main_nav", ["📡 頁面 A : 即時雷達監測", "🎯 頁面 B : 策略回測戰情"], label_visibility="collapsed", key="main_page_nav")
@@ -89,7 +87,8 @@ with st.sidebar:
     if current_page == "📡 頁面 A : 即時雷達監測":
         monitor_items = db_manager.get_all_monitor_items()
         monitor_tickers = [item['ticker'] for item in monitor_items]
-        monitor_map = {item['ticker']: item['display_name'] for item in monitor_items}
+        # 下拉選單顯示資料庫裡的漂亮名稱 (例如: 6531.TW 愛普*)
+        monitor_map = {item['ticker']: f"{item['ticker']} {item['display_name']}" for item in monitor_items}
         
         with st.container(border=True):
             st.markdown("### ▶️ 執行股票監測")
@@ -111,7 +110,7 @@ with st.sidebar:
             else:
                 selected_db = st.selectbox("us 資料庫選取", ["--- 請選擇 ---", "AAPL", "NVDA"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_a")
                 
-            new_sym = st.text_input("或 手動輸入代碼", value="", placeholder="例: 2330", key="sym_manual_a").strip().upper()
+            new_sym = st.text_input("或 手動輸入代碼", value="", placeholder="例: 6531", key="sym_manual_a").strip().upper()
             th_text = st.text_input("提醒門檻 (%)", value="", placeholder="例: 5, 10", key="th_a")
             entry_text = st.text_input("進場提醒 ($)", value="", placeholder="例: 150, 200", key="entry_a")
             exit_text = st.text_input("出場提醒 ($)", value="", placeholder="例: 140, 190", key="exit_a")
@@ -121,8 +120,25 @@ with st.sidebar:
                 if target_sym:
                     if target_sym[0].isdigit() and ".TW" not in target_sym: target_sym += ".TW"
                     mkt = "tw" if "台灣" in market_choice or ".TW" in target_sym else "us"
+                    
+                    # 🔥 V4.1.0 核心新增：自動向 Yahoo 查詢中文名稱
+                    display_name = target_sym
+                    with st.spinner(f"🔍 正在獲取 {target_sym} 名稱資訊..."):
+                        try:
+                            info = yf.Ticker(target_sym).info
+                            fetched_name = info.get('shortName') or info.get('longName')
+                            if fetched_name:
+                                display_name = fetched_name
+                        except Exception:
+                            pass # 若抓取失敗則退回使用代碼
+                    
                     db_manager.add_monitor_item(target_sym, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
-                    st.success(f"✅ 已將 {target_sym} 加入實戰監測！")
+                    
+                    # 強制更新資料庫的 display_name，解決名稱重複問題
+                    with sqlite3.connect(DB_PATH) as conn:
+                        conn.execute("UPDATE monitor_pool SET display_name = ? WHERE ticker = ?", (display_name, target_sym))
+                        
+                    st.success(f"✅ 已將 {display_name} ({target_sym}) 加入實戰監測！")
                     st.rerun()
             
             st.markdown("<hr style='margin: 10px 0; border-color: #475569;'>", unsafe_allow_html=True)
@@ -234,14 +250,12 @@ with st.sidebar:
     )
 
 # ==========================================================
-# 5️⃣ 主畫面戰情室 (🔥 A/B 雙軌視圖)
+# 5️⃣ 主畫面戰情室
 # ==========================================================
 st.markdown('<h1 class="main-title">📈 Quantitative Backtesting System (QBS)</h1>', unsafe_allow_html=True)
 
 if current_page == "📡 頁面 A : 即時雷達監測":
-    # 🔥 Phase 4: 直接呼叫 UI 雷達渲染模組
     ui_monitor.render_radar_dashboard()
             
 elif current_page == "🎯 頁面 B : 策略回測戰情":
-    # 🔥 Phase 3: 直接呼叫 UI 渲染模組展示小卡矩陣
     ui_strategy.render_backtest_dashboard()
