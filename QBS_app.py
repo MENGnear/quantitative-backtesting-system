@@ -2,19 +2,19 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v3.0.0 (Phase 3: 策略引擎與 UI 渲染整合版)
+# 程式版本 : QBS_v4.0.0 (Phase 4: 雙軌 UI 戰情室完整整合版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [新增] 引入 ui_strategy 模組，串接通用核心引擎 (engine_core)。
-#   2. [重構] 頁面 B 主畫面全面交由 ui_strategy.render_backtest_dashboard() 接管，渲染動態網格小卡。
-#   3. [維持] A/B 雙軌動態側邊欄與資料庫分流邏輯。
+#   1. [新增] 引入 ui_monitor 模組，串接即時雷達警報引擎 (engine_monitor)。
+#   2. [重構] 頁面 A 主畫面全面交由 ui_monitor.render_radar_dashboard() 接管。
+#   3. [完成] 頁面 A (即時雷達) 與頁面 B (策略回測) 的視覺化與邏輯完全分離並獨立運作。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
 #   - 3️⃣ 系統全域常數與資料庫初始化
 #   - 4️⃣ 側邊欄控制面板
-#   - 5️⃣ 主畫面戰情室 (🔥 V3.0.0 對接 UI 渲染模組)
+#   - 5️⃣ 主畫面戰情室 (🔥 V4.0.0 完成雙軌 UI 渲染模組串接)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -26,7 +26,8 @@ import json
 import sqlite3
 from core import db_manager
 from core import data_fetcher
-import ui_strategy  # 👈 Phase 3 新增：引入戰情小卡渲染模組
+import ui_strategy
+import ui_monitor  # 👈 Phase 4 新增：引入即時雷達渲染模組
 
 # ==========================================================
 # 1️⃣ 頁面設定與全域配置
@@ -51,7 +52,7 @@ load_css(os.path.join("assets", "style.css"))
 # ==========================================================
 # 3️⃣ 系統全域常數與資料庫/Session 初始化
 # ==========================================================
-APP_VERSION = "QBS_v3.0.0"
+APP_VERSION = "QBS_v4.0.0"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 # 精準絕對路徑防護
@@ -238,11 +239,8 @@ with st.sidebar:
 st.markdown('<h1 class="main-title">📈 Quantitative Backtesting System (QBS)</h1>', unsafe_allow_html=True)
 
 if current_page == "📡 頁面 A : 即時雷達監測":
-    st.markdown("### 📡 實戰雷達監測 (Execution Battlefield)")
-    monitor_items = db_manager.get_all_monitor_items()
-    clean_names = [item['display_name'] for item in monitor_items]
-    
-    st.info(f"💡 實戰彈藥庫目前共有 **{len(monitor_items)}** 檔監測標的：{', '.join(clean_names) if clean_names else '尚未新增'}")
+    # 🔥 Phase 4: 直接呼叫 UI 雷達渲染模組
+    ui_monitor.render_radar_dashboard()
             
 elif current_page == "🎯 頁面 B : 策略回測戰情":
     # 🔥 Phase 3: 直接呼叫 UI 渲染模組展示小卡矩陣
