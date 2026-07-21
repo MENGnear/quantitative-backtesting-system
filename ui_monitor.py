@@ -2,15 +2,20 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.0.1 (Phase 4: 即時雷達視覺化看板)
+# 程式版本 : ui_v1.0.2 (Phase 4: 快取防護罩版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [修復] 配合 engine_monitor_v1.1.1，改為一次性接收 (quotes, alerts)，消除重複 API 請求。
+#   1. [防護] 導入 @st.cache_data(ttl=60) 機制，阻絕 Streamlit 頻繁渲染攻擊 Yahoo 伺服器，保證網頁流暢不卡死。
 # ==========================================================
 
 import streamlit as st
 import pandas as pd
 from core import engine_monitor
+
+# 🔥 加入 60 秒快取，保護 API 不被短時間內重複呼叫
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_radar_data():
+    return engine_monitor.run_radar_scan()
 
 def render_radar_dashboard():
     """負責頁面 A 的整體即時雷達戰情室渲染"""
@@ -22,10 +27,9 @@ def render_radar_dashboard():
         st.info("💡 實戰彈藥庫目前為空，請先從左側「新增實戰監控」寫入標的。")
         return
 
-    # 2. 獲取即時報價與執行雷達掃描 (觸發防連發冷卻機制)
-    with st.spinner("📡 正在擷取即時報價與掃描防線..."):
-        # 一次性取得報價字典與警報陣列
-        quotes, alerts = engine_monitor.run_radar_scan()
+    # 2. 獲取即時報價與執行雷達掃描 (透過快取防護)
+    with st.spinner("📡 正在擷取即時報價與掃描防線 (每 60 秒自動更新)..."):
+        quotes, alerts = get_cached_radar_data()
 
     # 3. 🚨 最新警報區塊 (有警報才顯示)
     if alerts:
@@ -81,4 +85,4 @@ def render_radar_dashboard():
                             </div>
                             """, unsafe_allow_html=True)
                         else:
-                            st.markdown("<div style='color: #64748b; font-size: 1.2rem; margin-top: 15px;'>報價讀取中...</div>", unsafe_allow_html=True)
+                            st.markdown("<div style='color: #64748b; font-size: 1.2rem; margin-top: 15px;'>暫無報價，可能為非交易時段</div>", unsafe_allow_html=True)
