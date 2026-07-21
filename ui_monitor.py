@@ -2,12 +2,10 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.0.0 (Phase 4: 即時雷達視覺化看板)
+# 程式版本 : ui_v1.0.1 (Phase 4: 即時雷達視覺化看板)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [視覺] 建立雷達儀表板，將 monitor_pool 的監控數據具象化。
-#   2. [報價] 呼叫 engine_monitor 獲取極速報價，動態顯示漲跌幅與顏色。
-#   3. [警報] 獨立出「🚨 最新觸發警報」區塊，於上方醒目提示。
+#   1. [修復] 配合 engine_monitor_v1.1.1，改為一次性接收 (quotes, alerts)，消除重複 API 請求。
 # ==========================================================
 
 import streamlit as st
@@ -24,12 +22,10 @@ def render_radar_dashboard():
         st.info("💡 實戰彈藥庫目前為空，請先從左側「新增實戰監控」寫入標的。")
         return
 
-    tickers = targets_df['ticker'].tolist()
-    
     # 2. 獲取即時報價與執行雷達掃描 (觸發防連發冷卻機制)
     with st.spinner("📡 正在擷取即時報價與掃描防線..."):
-        quotes = engine_monitor.fetch_realtime_quotes(tickers)
-        alerts = engine_monitor.run_radar_scan()
+        # 一次性取得報價字典與警報陣列
+        quotes, alerts = engine_monitor.run_radar_scan()
 
     # 3. 🚨 最新警報區塊 (有警報才顯示)
     if alerts:
