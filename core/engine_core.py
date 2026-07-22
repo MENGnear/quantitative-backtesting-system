@@ -1,177 +1,157 @@
 # ==========================================================
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
-# 檔案名稱 : core/engine_core.py
-# 程式版本 : engine_v1.1.0 (Phase 3: 通用核心引擎 - 指標積木化架構)
+# 檔案名稱 : core/engine_monitor.py
+# 程式版本 : monitor_v1.3.0 (Phase 5: MON 輕量極速精準版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [架構] 正式定名為 engine_core.py，作為所有技術指標的「通用運算兵工廠」。
-#   2. [策略] 內建第一套組合策略：「趨勢動能策略 (Trend Momentum)」，包含 Base 60 趨勢 + Bonus 20 動能背離。
-#   3. [效能] 堅持純 Pandas 向量化運算 (Vectorized)，確保巨量歷史 K 線運算極速。
+#   1. [效能狂飆] 徹底棄用 yf.download 歷史陣列，改採 MON 原始的 yf.Ticker(sym).fast_info 瞬間快取。
+#   2. [數學精準] 直接抓取系統 previous_close 與 last_price，終結漲跌幅計算錯誤 (如跌 10 變漲 90) 漏洞。
+#   3. [防護] 確保美股與台股皆能以毫秒級速度獨立回傳。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 基礎環境與資料庫對接
-#   - 2️⃣ 核心技術指標運算池 (通用兵工廠)
-#   - 3️⃣ 策略配方：趨勢動能評分系統 (Trend Momentum)
-#   - 4️⃣ 引擎主程序 (匯總與排序)
+#   - 1️⃣ 基礎環境與冷卻記憶體初始化
+#   - 2️⃣ 高頻極速報價引擎 (🔥 V1.3.0 核心：fast_info 瞬間快照)
+#   - 3️⃣ 警報觸發與冷卻邏輯
+#   - 4️⃣ 引擎主程序
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 import sqlite3
 import pandas as pd
-import numpy as np
+import yfinance as yf
+import datetime
 import os
 import logging
 
-# 設定 Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# 精準絕對路徑防護
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 
 # ==========================================================
-# 1️⃣ 基礎環境與資料庫對接
+# 1️⃣ 基礎環境與冷卻記憶體初始化
 # ==========================================================
-def get_backtest_targets():
-    """從資料庫獲取回測母體清單 (對接頁面 B)"""
+COOLDOWN_SECONDS = 900 
+_ALERT_HISTORY = {}
+
+def get_monitor_targets():
     if not os.path.exists(DB_PATH):
         return pd.DataFrame()
     with sqlite3.connect(DB_PATH) as conn:
-        return pd.read_sql_query("SELECT ticker, display_name FROM backtest_pool", conn)
-
-def get_historical_data(ticker):
-    """提取指定股票的歷史 K 線，並將 Date 設為時間序列索引"""
-    with sqlite3.connect(DB_PATH) as conn:
-        df = pd.read_sql_query(
-            "SELECT Date, Open, High, Low, Close, Volume FROM daily_price WHERE ticker = ? ORDER BY Date ASC",
-            conn, params=(ticker,)
-        )
-    if df.empty:
-        return df
-    
-    df['Date'] = pd.to_datetime(df['Date'])
-    df.set_index('Date', inplace=True)
-    numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-    df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
-    df.dropna(inplace=True)
-    return df
+        return pd.read_sql_query("SELECT * FROM monitor_pool", conn)
 
 # ==========================================================
-# 2️⃣ 核心技術指標運算池 (通用兵工廠)
+# 2️⃣ 高頻極速報價引擎 (🔥 V1.3.0 核心)
 # ==========================================================
-def calculate_rsi(series, period=14):
-    """計算 RSI (Wilder's Smoothing 算法)"""
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).ewm(alpha=1/period, adjust=False).mean()
-    loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/period, adjust=False).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
-def compute_indicators(df):
-    """批次計算所有技術指標積木"""
-    # 均線系統
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['MA60'] = df['Close'].rolling(window=60).mean()
-    df['VMA5'] = df['Volume'].rolling(window=5).mean()
-    
-    # MACD 系統 (12, 26, 9)
-    df['EMA12'] = df['Close'].ewm(span=12, adjust=False).mean()
-    df['EMA26'] = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD_Line'] = df['EMA12'] - df['EMA26']
-    df['MACD_Signal'] = df['MACD_Line'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = df['MACD_Line'] - df['MACD_Signal']
-    
-    # RSI 系統
-    df['RSI_6'] = calculate_rsi(df['Close'], 6)
-    df['RSI_14'] = calculate_rsi(df['Close'], 14)
-    df['RSI_24'] = calculate_rsi(df['Close'], 24)
-    
-    return df
-
-# ==========================================================
-# 3️⃣ 策略配方：趨勢動能評分系統 (Trend Momentum)
-# ==========================================================
-def evaluate_trend_momentum(df):
-    """執行 Base 60 (趨勢) + Bonus 20 (動能背離) 評分邏輯"""
-    if len(df) < 60:
-        return None 
+def fetch_realtime_quotes(tickers):
+    """
+    完全參照 MON 的輕量化做法：
+    使用 fast_info 獲取當下瞬間切片，不下載歷史 K 線，確保毫秒級速度與絕對精準。
+    """
+    quotes = {}
+    if not tickers:
+        return quotes
         
-    latest = df.iloc[-1]
-    prev_10 = df.iloc[-11] if len(df) >= 11 else df.iloc[0] 
-    prev_1 = df.iloc[-2]
-    
-    base_score = 0
-    bonus_score = 0
-    
-    # --- 主幹趨勢評分 (Base 60) ---
-    if latest['MACD_Hist'] > 0: base_score += 15
-    if latest['Close'] > latest['MA20']: base_score += 10
-    if latest['MA20'] > prev_1['MA20']: base_score += 15
-    if latest['MA20'] > latest['MA60']: base_score += 10
-    if latest['Volume'] > (latest['VMA5'] * 1.5): base_score += 10
+    for ticker in tickers:
+        try:
+            # 針對大盤與個股抓取瞬間快照
+            tkr = yf.Ticker(ticker)
+            fi = tkr.fast_info
+            
+            # 精準獲取：當下現價 (last_price) 與 官方昨收 (previous_close)
+            curr = fi.get('lastPrice') or fi.get('last_price')
+            prev = fi.get('previousClose') or fi.get('previous_close')
+            open_p = fi.get('open')
+            
+            if curr is not None and prev is not None:
+                curr = float(curr)
+                prev = float(prev)
+                open_p = float(open_p) if open_p is not None else prev
+                
+                # 絕對精準的漲跌數學計算
+                change_amt = curr - prev
+                change_pct = (change_amt / prev * 100) if prev > 0 else 0.0
+                
+                quotes[ticker] = {
+                    'current': round(curr, 2),
+                    'prev': round(prev, 2),
+                    'open': round(open_p, 2),
+                    'change_amt': round(change_amt, 2),
+                    'change_pct': round(change_pct, 2)
+                }
+        except Exception as e:
+            pass # 單檔失敗不影響全局
+            
+    return quotes
 
-    # --- 動能震盪紅利 (Bonus 20) ---
-    divergence_flag = False
-    
-    if latest['RSI_6'] > latest['RSI_14'] and latest['RSI_14'] > 50:
-        bonus_score += 5
-        
-    # 底背離判定: 股價創近10日新低，但 RSI_14 反彈且小於 45
-    if latest['Close'] < prev_10['Close'] and latest['RSI_14'] > prev_10['RSI_14'] and latest['RSI_14'] < 45:
-        bonus_score += 15
-        divergence_flag = True
-
-    total_score = base_score + bonus_score
-    
-    return {
-        'Close': round(latest['Close'], 2),
-        'Base_Score': base_score,
-        'Bonus_Score': bonus_score,
-        'Total_Score': total_score,
-        'Divergence': '✅' if divergence_flag else '-',
-        'RSI_14': round(latest['RSI_14'], 1)
-    }
+def parse_custom_values(val_str):
+    if not val_str or pd.isna(val_str):
+        return []
+    try:
+        return [float(x.strip()) for x in str(val_str).split(',') if x.strip()]
+    except Exception:
+        return []
 
 # ==========================================================
-# 4️⃣ 引擎主程序 (匯總與排序)
+# 3️⃣ 警報觸發與冷卻邏輯
 # ==========================================================
-def run_trend_momentum_analysis():
-    """執行趨勢動能策略，輸出結構化總表 DataFrame供 UI 渲染"""
-    targets_df = get_backtest_targets()
+def check_cooldown(alert_key):
+    now = datetime.datetime.now().timestamp()
+    last_trigger = _ALERT_HISTORY.get(alert_key, 0)
+    if (now - last_trigger) > COOLDOWN_SECONDS:
+        _ALERT_HISTORY[alert_key] = now
+        return True
+    return False
+
+def evaluate_alerts(row, quote):
+    ticker = row['ticker']
+    current_price = quote['current']
+    change_pct = quote['change_pct']
+    
+    alerts = []
+    thresholds = parse_custom_values(row['thresholds'])
+    entry_prices = parse_custom_values(row['entry_prices'])
+    exit_prices = parse_custom_values(row['exit_prices'])
+
+    for th in thresholds:
+        if abs(change_pct) >= th:
+            direction = "📈 暴漲" if change_pct > 0 else "📉 暴跌"
+            alert_key = f"{ticker}_TH_{th}_{direction}"
+            if check_cooldown(alert_key):
+                alerts.append({'ticker': ticker, 'type': f'波動提醒', 'message': f"漲跌達 {change_pct}% (門檻 {th}%)"})
+
+    for entry in entry_prices:
+        if current_price <= entry:
+            alert_key = f"{ticker}_ENTRY_{entry}"
+            if check_cooldown(alert_key):
+                alerts.append({'ticker': ticker, 'type': '🎯 進場', 'message': f"達進場價 ${entry}"})
+
+    for exit_p in exit_prices:
+        if current_price >= exit_p:
+            alert_key = f"{ticker}_EXIT_{exit_p}"
+            if check_cooldown(alert_key):
+                alerts.append({'ticker': ticker, 'type': '💰 出場', 'message': f"達出場價 ${exit_p}"})
+
+    return alerts
+
+# ==========================================================
+# 4️⃣ 引擎主程序
+# ==========================================================
+def run_radar_scan():
+    targets_df = get_monitor_targets()
     if targets_df.empty:
-        return pd.DataFrame()
-        
-    results = []
+        return {}, []
+
+    tickers = targets_df['ticker'].tolist()
     
+    # 這裡的報價獲取現在是毫秒級的
+    quotes = fetch_realtime_quotes(tickers)
+    
+    all_triggered_alerts = []
     for _, row in targets_df.iterrows():
-        ticker = row['ticker']
-        name = row['display_name']
-        
-        hist_df = get_historical_data(ticker)
-        if hist_df.empty or len(hist_df) < 60:
-            continue
+        if row['ticker'] in quotes:
+            triggered = evaluate_alerts(row, quotes[row['ticker']])
+            all_triggered_alerts.extend(triggered)
             
-        hist_df = compute_indicators(hist_df)
-        score_data = evaluate_trend_momentum(hist_df)
-        
-        if score_data:
-            results.append({
-                '代碼': ticker,
-                '名稱': name,
-                '收盤價': score_data['Close'],
-                'RSI_14': score_data['RSI_14'],
-                '底背離': score_data['Divergence'],
-                '趨勢分(60)': score_data['Base_Score'],
-                '紅利分(20)': score_data['Bonus_Score'],
-                '總分': score_data['Total_Score']
-            })
-            
-    if not results:
-        return pd.DataFrame()
-        
-    result_df = pd.DataFrame(results)
-    result_df.sort_values(by=['總分', '趨勢分(60)'], ascending=[False, False], inplace=True)
-    result_df.reset_index(drop=True, inplace=True)
-    
-    return result_df
+    return quotes, all_triggered_alerts
