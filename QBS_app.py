@@ -2,17 +2,17 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.4.0 (Phase 5: 側邊欄版本控制塊 CSS 修復)
+# 程式版本 : QBS_v4.5.0 (Phase 5: MON 美股防呆與版本區塊修復)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [排版修復] 版本控制區塊加入 flex 置中對齊屬性，確保完美置中。
-#   2. [亂碼防護] 徹底移除該 HTML 區段前方空白縮排，防止 Streamlit 解析成 Markdown 程式碼區塊。
+#   1. [新增防呆] 美股驗證徹底回歸 MON 寫法，採用 yf.download("1d") 確保極速不卡死。
+#   2. [排版修復] 底部版本區塊改用 st.sidebar.markdown，並徹底消除字串縮排，解決跑位至主畫面與亂碼問題。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
 #   - 3️⃣ 系統全域常數與資料庫初始化
-#   - 4️⃣ 側邊欄控制面板 (🔥 V4.4.0 版本區塊置中與去縮排)
+#   - 4️⃣ 側邊欄控制面板 (🔥 V4.5.0 防呆與置中修正)
 #   - 5️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -59,7 +59,7 @@ if "monitoring" not in st.session_state:
     st.session_state.monitoring = False
 
 def sidebar_header(icon, title):
-    st.markdown(f"""
+    st.sidebar.markdown(f"""
         <div style="margin-top: 15px; margin-bottom: 12px;">
             <span style="font-size: 1.05rem; font-weight: 700; color: #60a5fa; letter-spacing: 1px;">{icon} {title}</span>
             <hr style="margin: 5px 0 0 0; border: 0; border-top: 1px dashed #475569;">
@@ -133,8 +133,9 @@ with st.sidebar:
                                         display_name = name_part
                                         is_valid = True
                             else:
-                                info = yf.Ticker(target_sym).fast_info
-                                if 'lastPrice' in info or 'previousClose' in info:
+                                # 🔥 完美回歸 MON 寫法：用 yf.download 測試 1 天，穩定絕不卡死
+                                test_df = yf.download(target_sym, period="1d", progress=False)
+                                if not test_df.empty:
                                     display_name = target_sym
                                     is_valid = True
                         except Exception:
@@ -238,22 +239,20 @@ with st.sidebar:
             refresh_sec = st.slider("刷新頻率(秒)", 5, 60, 30, key="refresh_b")
             if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
 
-    # ==========================================
-    # 🌟 版本控制塊 (🔥 V4.4.0 解決置中與去縮排亂碼)
-    # ==========================================
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-    tpe_now = now_utc.astimezone(pytz.timezone('Asia/Taipei'))
-    us_now = now_utc.astimezone(pytz.timezone('US/Eastern'))
-    
-st.markdown(f"""
-<div style="background-color:#0f172a; padding:12px; border-radius:8px; border:1px solid #1e293b; margin-top:10px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
-    <div style="font-size: 0.9rem; font-weight: 700; color: #60a5fa; margin-bottom: 5px;">🗂️ 系統當前版本</div>
-    <div style="color:#f8fafc; font-size:1rem; font-weight:700; margin-bottom:12px;">{APP_VERSION}</div>
-    <div style="font-size: 0.9rem; font-weight: 700; color: #60a5fa; margin-bottom: 5px;">🕒 最後資料更新</div>
-    <div style="color:#f1f5f9; font-size:0.85rem; font-weight:600; margin-bottom:4px;">Tw {tpe_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
-    <div style="color:#f1f5f9; font-size:0.85rem; font-weight:600;">Us {us_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
-</div>
-""", unsafe_allow_html=True)
+# ==========================================================
+# 🌟 版本控制塊 (🔥 V4.5.0 絕對零縮排，完美置中側邊欄)
+# ==========================================================
+now_utc = datetime.datetime.now(datetime.timezone.utc)
+tpe_now = now_utc.astimezone(pytz.timezone('Asia/Taipei'))
+us_now = now_utc.astimezone(pytz.timezone('US/Eastern'))
+
+st.sidebar.markdown(f"""<div style="background-color:#0f172a; padding:12px; border-radius:8px; border:1px solid #1e293b; margin-top:10px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
+<div style="font-size: 0.9rem; font-weight: 700; color: #60a5fa; margin-bottom: 5px;">🗂️ 系統當前版本</div>
+<div style="color:#f8fafc; font-size:1rem; font-weight:700; margin-bottom:12px;">{APP_VERSION}</div>
+<div style="font-size: 0.9rem; font-weight: 700; color: #60a5fa; margin-bottom: 5px;">🕒 最後資料更新</div>
+<div style="color:#f1f5f9; font-size:0.85rem; font-weight:600; margin-bottom:4px;">Tw {tpe_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
+<div style="color:#f1f5f9; font-size:0.85rem; font-weight:600;">Us {us_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
+</div>""", unsafe_allow_html=True)
 
 # ==========================================================
 # 5️⃣ 主畫面戰情室
