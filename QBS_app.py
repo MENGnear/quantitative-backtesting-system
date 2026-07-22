@@ -2,17 +2,16 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.1.2 (Phase 4.1: 奇摩股市名稱爬蟲淨化版)
+# 程式版本 : QBS_v4.1.3 (Phase 4.1: 極端名稱淨化版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [錯誤修復] 強化奇摩股市爬蟲字串處理，徹底剔除「(.TW) 走勢圖」等冗餘字眼，還原純淨中文名稱。
-#   2. [架構鎖定] 嚴格維持原本的雙軌介面與資料庫邏輯，無任何大範圍架構改動。
+#   1. [錯誤修復] 強化奇摩股市爬蟲字串處理，使用括號強制截斷，確保絕對不會存入「(.TW) 走勢圖」。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
 #   - 3️⃣ 系統全域常數與資料庫初始化
-#   - 4️⃣ 側邊欄控制面板 (🔥 V4.1.2 局部修正：精準字串淨化)
+#   - 4️⃣ 側邊欄控制面板 (🔥 V4.1.3 局部修正：極端字串淨化)
 #   - 5️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -54,7 +53,7 @@ load_css(os.path.join("assets", "style.css"))
 # ==========================================================
 # 3️⃣ 系統全域常數與資料庫/Session 初始化
 # ==========================================================
-APP_VERSION = "QBS_v4.1.2"
+APP_VERSION = "QBS_v4.1.3"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -131,10 +130,9 @@ with st.sidebar:
                                 soup = BeautifulSoup(res.text, 'html.parser')
                                 title = soup.find('title').text
                                 if " - " in title:
-                                    # 🔥 V4.1.2 修復核心：嚴格字串淨化
-                                    raw_title = title.split(" - ")[0] 
-                                    name_part = raw_title.replace("(.TW) 走勢圖", "").replace("(TW) 走勢圖", "")
-                                    name_part = name_part.replace(target_sym.replace('.TW', ''), '').strip()
+                                    # 🔥 V4.1.3 極端淨化法：直接用左括號切斷，例如 "2330 台積電(.TW) 走勢圖" -> "2330 台積電"
+                                    clean_title = title.split(" - ")[0].split("(")[0]
+                                    name_part = clean_title.replace(target_sym.replace('.TW', ''), '').strip()
                                     if name_part:
                                         display_name = name_part
                             else:
