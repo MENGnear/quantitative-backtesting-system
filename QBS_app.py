@@ -2,17 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.2.0 (Phase 4.1: 導入奇摩股市中文名稱抓取機制)
+# 程式版本 : QBS_v4.1.1 (Phase 4.1: 還原 MON 奇摩股市命名爬蟲)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [新增功能] 導入仿照原版 MON 的 Yahoo 奇摩股市網頁爬蟲，確保台股能精準抓取道地中文名（如：台積電、愛普*），捨棄 yfinance 英文長名。
-#   2. [架構維持] 完整保留雙軌 UI 戰情室與過往所有回測功能。
+#   1. [新增功能] 導入 requests 與 BeautifulSoup。
+#   2. [智能分流] 重現原版 MON 邏輯：台股 (.TW) 爬取奇摩股市精準抓取中文名；美股則維持 yfinance。
+#   3. [防護] 其餘歷史回測、資料庫初始化等全域架構 100% 鎖定不變。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
-#   - 3️⃣ 系統全域常數與資料庫/Session 初始化
-#   - 4️⃣ 側邊欄控制面板 (🔥 V4.2.0 導入奇摩中文爬蟲)
+#   - 3️⃣ 系統全域常數與資料庫初始化
+#   - 4️⃣ 側邊欄控制面板 (🔥 V4.1.1 升級：智能分流爬蟲)
 #   - 5️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -23,9 +24,9 @@ import pytz
 import os
 import json
 import sqlite3
-import requests
-from bs4 import BeautifulSoup
 import yfinance as yf
+import requests              # 👈 V4.1.1 新增：用於向奇摩股市發送請求
+from bs4 import BeautifulSoup # 👈 V4.1.1 新增：用於解析奇摩股市 HTML 標籤
 from core import db_manager
 from core import data_fetcher
 import ui_strategy
@@ -54,7 +55,7 @@ load_css(os.path.join("assets", "style.css"))
 # ==========================================================
 # 3️⃣ 系統全域常數與資料庫/Session 初始化
 # ==========================================================
-APP_VERSION = "QBS_v4.2.0"
+APP_VERSION = "QBS_v4.1.1"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -88,7 +89,7 @@ with st.sidebar:
     if current_page == "📡 頁面 A : 即時雷達監測":
         monitor_items = db_manager.get_all_monitor_items()
         monitor_tickers = [item['ticker'] for item in monitor_items]
-        monitor_map = {item['ticker']: f"{item['ticker'].replace('.TW', '')} {item['display_name']}" for item in monitor_items}
+        monitor_map = {item['ticker']: f"{item['ticker']} {item['display_name']}" for item in monitor_items}
         
         with st.container(border=True):
             st.markdown("### ▶️ 執行股票監測")
@@ -110,7 +111,7 @@ with st.sidebar:
             else:
                 selected_db = st.selectbox("us 資料庫選取", ["--- 請選擇 ---", "AAPL", "NVDA"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_a")
                 
-            new_sym = st.text_input("或 手動輸入代碼", value="", placeholder="例: 2330", key="sym_manual_a").strip().upper()
+            new_sym = st.text_input("或 手動輸入代碼", value="", placeholder="例: 6531", key="sym_manual_a").strip().upper()
             th_text = st.text_input("提醒門檻 (%)", value="", placeholder="例: 5, 10", key="th_a")
             entry_text = st.text_input("進場提醒 ($)", value="", placeholder="例: 150, 200", key="entry_a")
             exit_text = st.text_input("出場提醒 ($)", value="", placeholder="例: 140, 190", key="exit_a")
@@ -121,37 +122,35 @@ with st.sidebar:
                     if target_sym[0].isdigit() and ".TW" not in target_sym: target_sym += ".TW"
                     mkt = "tw" if "台灣" in market_choice or ".TW" in target_sym else "us"
                     
-                    # 🔥 V4.2.0 還原 MON 經典：透過 Yahoo 奇摩股市精準爬取道地中文名
-                    display_name = target_sym.replace('.TW', '')
-                    with st.spinner(f"🔍 正在從 Yahoo 奇摩擷取 {target_sym} 中文名稱..."):
+                    display_name = target_sym
+                    with st.spinner(f"🔍 正在獲取 {target_sym} 名稱資訊..."):
                         try:
+                            # 🔥 V4.1.1 核心新增：分流查詢，台股使用奇摩股市，美股使用 yfinance
                             if ".TW" in target_sym:
-                                clean_code = target_sym.replace('.TW', '')
-                                url = f"https://tw.stock.yahoo.com/quote/{clean_code}.TW"
-                                headers = {'User-Agent': 'Mozilla/5.0'}
+                                url = f"https://tw.stock.yahoo.com/quote/{target_sym}"
+                                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                                 res = requests.get(url, headers=headers, timeout=5)
-                                if res.status_code == 200:
-                                    soup = BeautifulSoup(res.text, 'html.parser')
-                                    # 抓取奇摩股市標題列中的股票名稱
-                                    title_tag = soup.find('h1')
-                                    if title_tag:
-                                        full_title = title_tag.text.strip()
-                                        # 通常格式為 "2330 台積電 | ..." 或類似結構，進行切字
-                                        parts = full_title.split()
-                                        if len(parts) >= 2:
-                                            display_name = parts[1]
+                                soup = BeautifulSoup(res.text, 'html.parser')
+                                title = soup.find('title').text
+                                if " - " in title:
+                                    # 擷取 "2330 台積電" 中的 "台積電" (將代碼剔除)
+                                    name_part = title.split(" - ")[0].replace(target_sym.replace('.TW', ''), '').strip()
+                                    if name_part:
+                                        display_name = name_part
                             else:
                                 info = yf.Ticker(target_sym).info
-                                display_name = info.get('shortName') or target_sym
-                        except Exception:
-                            pass
+                                fetched_name = info.get('shortName') or info.get('longName')
+                                if fetched_name:
+                                    display_name = fetched_name
+                        except Exception as e:
+                            pass # 若抓取失敗則退回使用代碼
                     
                     db_manager.add_monitor_item(target_sym, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
                     
                     with sqlite3.connect(DB_PATH) as conn:
                         conn.execute("UPDATE monitor_pool SET display_name = ? WHERE ticker = ?", (display_name, target_sym))
                         
-                    st.success(f"✅ 已將 {clean_code if '.TW' in target_sym else target_sym} {display_name} 加入實戰監測！")
+                    st.success(f"✅ 已將 {display_name} ({target_sym}) 加入實戰監測！")
                     st.rerun()
             
             st.markdown("<hr style='margin: 10px 0; border-color: #475569;'>", unsafe_allow_html=True)
