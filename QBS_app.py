@@ -2,18 +2,17 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.1.1 (Phase 4.1: 還原 MON 奇摩股市命名爬蟲)
+# 程式版本 : QBS_v4.1.2 (Phase 4.1: 奇摩股市名稱爬蟲淨化版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [新增功能] 導入 requests 與 BeautifulSoup。
-#   2. [智能分流] 重現原版 MON 邏輯：台股 (.TW) 爬取奇摩股市精準抓取中文名；美股則維持 yfinance。
-#   3. [防護] 其餘歷史回測、資料庫初始化等全域架構 100% 鎖定不變。
+#   1. [錯誤修復] 強化奇摩股市爬蟲字串處理，徹底剔除「(.TW) 走勢圖」等冗餘字眼，還原純淨中文名稱。
+#   2. [架構鎖定] 嚴格維持原本的雙軌介面與資料庫邏輯，無任何大範圍架構改動。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
 #   - 3️⃣ 系統全域常數與資料庫初始化
-#   - 4️⃣ 側邊欄控制面板 (🔥 V4.1.1 升級：智能分流爬蟲)
+#   - 4️⃣ 側邊欄控制面板 (🔥 V4.1.2 局部修正：精準字串淨化)
 #   - 5️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -25,8 +24,8 @@ import os
 import json
 import sqlite3
 import yfinance as yf
-import requests              # 👈 V4.1.1 新增：用於向奇摩股市發送請求
-from bs4 import BeautifulSoup # 👈 V4.1.1 新增：用於解析奇摩股市 HTML 標籤
+import requests
+from bs4 import BeautifulSoup
 from core import db_manager
 from core import data_fetcher
 import ui_strategy
@@ -55,7 +54,7 @@ load_css(os.path.join("assets", "style.css"))
 # ==========================================================
 # 3️⃣ 系統全域常數與資料庫/Session 初始化
 # ==========================================================
-APP_VERSION = "QBS_v4.1.1"
+APP_VERSION = "QBS_v4.1.2"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -125,7 +124,6 @@ with st.sidebar:
                     display_name = target_sym
                     with st.spinner(f"🔍 正在獲取 {target_sym} 名稱資訊..."):
                         try:
-                            # 🔥 V4.1.1 核心新增：分流查詢，台股使用奇摩股市，美股使用 yfinance
                             if ".TW" in target_sym:
                                 url = f"https://tw.stock.yahoo.com/quote/{target_sym}"
                                 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -133,8 +131,10 @@ with st.sidebar:
                                 soup = BeautifulSoup(res.text, 'html.parser')
                                 title = soup.find('title').text
                                 if " - " in title:
-                                    # 擷取 "2330 台積電" 中的 "台積電" (將代碼剔除)
-                                    name_part = title.split(" - ")[0].replace(target_sym.replace('.TW', ''), '').strip()
+                                    # 🔥 V4.1.2 修復核心：嚴格字串淨化
+                                    raw_title = title.split(" - ")[0] 
+                                    name_part = raw_title.replace("(.TW) 走勢圖", "").replace("(TW) 走勢圖", "")
+                                    name_part = name_part.replace(target_sym.replace('.TW', ''), '').strip()
                                     if name_part:
                                         display_name = name_part
                             else:
@@ -143,7 +143,7 @@ with st.sidebar:
                                 if fetched_name:
                                     display_name = fetched_name
                         except Exception as e:
-                            pass # 若抓取失敗則退回使用代碼
+                            pass
                     
                     db_manager.add_monitor_item(target_sym, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
                     
