@@ -2,18 +2,17 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.2.0 (Phase 5: MON 側邊欄美學與防呆機制)
+# 程式版本 : QBS_v4.2.1 (Phase 5: MON 側邊欄細節淨化版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [UI 重構] 全面淘汰 markdown 標題，使用專屬 HTML/CSS 打造精緻的 MON 層次感側邊欄。
-#   2. [防呆機制] 恢復 MON 寫入前檢查機制：若查無名稱或代碼錯誤，直接阻擋寫入並提示錯誤，杜絕髒資料。
-#   3. [精準爬蟲] 奇摩爬蟲與美股爬蟲極端淨化，美股僅保留代碼以維持版面整潔。
+#   1. [UI 淨化] 修正刪除選單，使用 replace 強制剔除 '.TW' 字眼，保持介面極度乾淨。
+#   2. [防呆守門員] 新增股票前，強制使用 fast_info 驗證是否有即時報價，查無資料直接阻擋寫入。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
 #   - 3️⃣ 系統全域常數與資料庫初始化
-#   - 4️⃣ 側邊欄控制面板 (🔥 V4.2.0 精緻美化與防呆守門員)
+#   - 4️⃣ 側邊欄控制面板 (🔥 V4.2.1 防呆機制與選單淨化)
 #   - 5️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -48,7 +47,7 @@ def load_css(file_path):
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 load_css(os.path.join("assets", "style.css"))
 
-APP_VERSION = "QBS_v4.2.0"
+APP_VERSION = "QBS_v4.2.1"
 TAIPEI_TZ = pytz.timezone('Asia/Taipei')
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
@@ -60,7 +59,6 @@ if "db_initialized" not in st.session_state:
 if "monitoring" not in st.session_state: 
     st.session_state.monitoring = False
 
-# 用來產生美觀側邊欄標題的輔助函式
 def sidebar_header(icon, title):
     st.markdown(f"""
         <div style="margin-top: 15px; margin-bottom: 12px;">
@@ -72,7 +70,7 @@ def sidebar_header(icon, title):
 test_display_map = {"2330.TW": "2330 台積電", "2454.TW": "2454 聯發科", "AAPL": "AAPL", "NVDA": "NVDA"}
 
 # ==========================================================
-# 4️⃣ 側邊欄控制面板 (🔥 精緻美化與防呆)
+# 4️⃣ 側邊欄控制面板 (🔥 防呆與選單淨化)
 # ==========================================================
 with st.sidebar:
     with st.container(border=True):
@@ -82,7 +80,9 @@ with st.sidebar:
     if current_page == "📡 頁面 A : 即時雷達監測":
         monitor_items = db_manager.get_all_monitor_items()
         monitor_tickers = [item['ticker'] for item in monitor_items]
-        monitor_map = {item['ticker']: f"{item['ticker']} {item['display_name']}" for item in monitor_items}
+        
+        # 🔥 V4.2.1 刪除選單顯示過濾 (剔除 .TW)
+        monitor_map = {item['ticker']: f"{item['ticker'].replace('.TW', '')} {item['display_name']}" for item in monitor_items}
         
         with st.container(border=True):
             sidebar_header("▶️", "執行股票監測")
@@ -121,33 +121,35 @@ with st.sidebar:
                     
                     with st.spinner(f"🔍 驗證標的與獲取名稱中..."):
                         try:
-                            if ".TW" in target_sym:
-                                url = f"https://tw.stock.yahoo.com/quote/{target_sym}"
-                                res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-                                soup = BeautifulSoup(res.text, 'html.parser')
-                                title = soup.find('title').text
-                                if " - " in title:
-                                    clean_title = title.split(" - ")[0].split("(")[0]
-                                    name_part = clean_title.replace(target_sym.replace('.TW', ''), '').strip()
-                                    if name_part:
-                                        display_name = name_part
-                                        is_valid = True
-                            else:
-                                # 美股驗證：確保有此股票，但顯示名稱只用代碼，保持版面乾淨
-                                info = yf.Ticker(target_sym).fast_info
-                                if 'lastPrice' in info or 'previousClose' in info:
-                                    display_name = target_sym
-                                    is_valid = True
+                            # 1. 先用 fast_info 驗證是否有即時報價，確保代碼正確 (防呆核心)
+                            tkr_info = yf.Ticker(target_sym).fast_info
+                            if tkr_info.get('lastPrice') or tkr_info.get('last_price'):
+                                is_valid = True
+                                display_name = target_sym # 美股預設顯示代碼
+                                
+                                # 2. 若為台股，才去奇摩抓中文名，並設定 timeout 防止卡死
+                                if ".TW" in target_sym:
+                                    try:
+                                        url = f"https://tw.stock.yahoo.com/quote/{target_sym}"
+                                        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2)
+                                        soup = BeautifulSoup(res.text, 'html.parser')
+                                        title = soup.find('title').text
+                                        if " - " in title:
+                                            clean_title = title.split(" - ")[0].split("(")[0]
+                                            name_part = clean_title.replace(target_sym.replace('.TW', ''), '').strip()
+                                            if name_part:
+                                                display_name = name_part
+                                    except Exception:
+                                        display_name = target_sym.replace('.TW', '') # 爬蟲失敗退回使用純代碼
                         except Exception:
                             is_valid = False
                     
-                    # 🔥 MON 防呆守門員：無效代碼拒絕寫入
                     if is_valid:
                         db_manager.add_monitor_item(target_sym, display_name=display_name, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
                         st.success(f"✅ {display_name} ({target_sym}) 新增成功！")
                         st.rerun()
                     else:
-                        st.error("❌ 查無此股票或獲取失敗，拒絕寫入！")
+                        st.error("❌ 查無此股票或無報價，拒絕寫入！")
             
             st.markdown("<hr style='margin: 10px 0; border-color: #334155;'>", unsafe_allow_html=True)
             st.markdown("<div style='color:#a78bfa; font-size:0.85rem; font-weight:700; margin-bottom:5px;'>📥 回測結果匯入</div>", unsafe_allow_html=True)
@@ -169,7 +171,9 @@ with st.sidebar:
     elif current_page == "🎯 頁面 B : 策略回測戰情":
         backtest_items = db_manager.get_all_backtest_items()
         backtest_tickers = [item['ticker'] for item in backtest_items]
-        backtest_map = {item['ticker']: item['display_name'] for item in backtest_items}
+        
+        # 刪除選單顯示過濾 (剔除 .TW)
+        backtest_map = {item['ticker']: f"{item['ticker'].replace('.TW', '')} {item['display_name']}" for item in backtest_items}
         
         with st.container(border=True):
             sidebar_header("🧪", "回測策略設定")
@@ -225,7 +229,7 @@ with st.sidebar:
                 if not backtest_tickers:
                     st.warning("⚠️ 回測池目前為空")
                 else:
-                    with st.spinner('🔄 請求 K 線資料...'):
+                    with st.spinner('🔄 請求 K 線資料 (回測系統專屬)...'):
                         success = data_fetcher.smart_update_historical_data(tickers=backtest_tickers, force_5y=True)
                         if success: st.success("✅ 更新完成！")
                         else: st.error("⚠️ 更新失敗")
