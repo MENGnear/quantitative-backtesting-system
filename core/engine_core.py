@@ -2,16 +2,15 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.3.0 (Phase 5: 回歸 MON 毫秒級極速引擎)
+# 程式版本 : monitor_v1.4.0 (Phase 5: MON 併發多線程極速版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [核心重構] 徹底廢除 yf.download 陣列抓取，改用 yf.Ticker(sym).fast_info。
-#   2. [精準修復] 直接取用官方 previous_close 與 last_price 計算漲跌，杜絕陣列偏移造成的暴漲暴跌誤判。
-#   3. [效能解放] 擺脫歷史 K 線下載負擔，讓雷達回歸輕量、極速的設計初衷。
+#   1. [效能解放] 導入 concurrent.futures 多線程技術，台美股報價同步併發，解決美股單線程排隊卡頓問題。
+#   2. [精準數值] 確保每檔股票獨立調用 fast_info 的 last_price 與 previous_close，數值 100% 精準。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 基礎環境與冷卻記憶體初始化
-#   - 2️⃣ 高頻報價與資料解析模組 (🔥 V1.3.0 極速快取)
+#   - 2️⃣ 高頻報價與資料解析模組 (🔥 V1.4.0 併發多線程引擎)
 #   - 3️⃣ 警報觸發與冷卻邏輯
 #   - 4️⃣ 引擎主程序
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
@@ -23,6 +22,7 @@ import yfinance as yf
 import datetime
 import os
 import logging
+import concurrent.futures
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -42,40 +42,49 @@ def get_monitor_targets():
         return pd.read_sql_query("SELECT * FROM monitor_pool", conn)
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組 (🔥 V1.3.0 極速快取)
+# 2️⃣ 高頻報價與資料解析模組 (🔥 V1.4.0 併發多線程引擎)
 # ==========================================================
+def fetch_single_quote(ticker):
+    """獨立執行緒的單一標的報價抓取，確保無陣列偏移"""
+    try:
+        t = yf.Ticker(ticker)
+        fi = t.fast_info
+        
+        curr = float(fi.last_price)
+        prev = float(fi.previous_close)
+        
+        try:
+            open_p = float(fi.open)
+        except Exception:
+            open_p = prev # 若無開盤價則以昨收代替
+            
+        change_amt = curr - prev
+        change_pct = (change_amt / prev * 100) if prev > 0 else 0.0
+        
+        return ticker, {
+            'current': round(curr, 2),
+            'prev': round(prev, 2),
+            'open': round(open_p, 2),
+            'change_amt': round(change_amt, 2),
+            'change_pct': round(change_pct, 2)
+        }
+    except Exception:
+        return ticker, None
+
 def fetch_realtime_quotes(tickers):
-    """回歸 MON 做法：使用 fast_info 獨立抓取，保證極速且數值精準"""
+    """完全繼承 MON 極速精神：併發多線程 (ThreadPoolExecutor) 處理"""
     quotes = {}
     if not tickers:
         return quotes
         
-    for ticker in tickers:
-        try:
-            t = yf.Ticker(ticker)
-            fi = t.fast_info
-            
-            curr = float(fi.last_price)
-            prev = float(fi.previous_close)
-            
-            try:
-                open_p = float(fi.open)
-            except Exception:
-                open_p = prev # 若無開盤價則以昨收代替
+    # 同時開啟最多 10 條執行緒，瞬間同步發送請求
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_ticker = {executor.submit(fetch_single_quote, ticker): ticker for ticker in tickers}
+        for future in concurrent.futures.as_completed(future_to_ticker):
+            ticker, data = future.result()
+            if data:
+                quotes[ticker] = data
                 
-            change_amt = curr - prev
-            change_pct = (change_amt / prev * 100) if prev > 0 else 0.0
-            
-            quotes[ticker] = {
-                'current': round(curr, 2),
-                'prev': round(prev, 2),
-                'open': round(open_p, 2),
-                'change_amt': round(change_amt, 2),
-                'change_pct': round(change_pct, 2)
-            }
-        except Exception as e:
-            pass
-            
     return quotes
 
 def parse_custom_values(val_str):
