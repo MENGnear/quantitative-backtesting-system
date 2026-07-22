@@ -2,17 +2,17 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.5.0 (Phase 5: MON 視覺完美校正版)
+# 程式版本 : ui_v1.5.0 (Phase 5: MON 版面死鎖與色彩精準修正)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [版面鎖定] 廢除 st.columns，使用 Flexbox 並將卡片 CSS 寫死寬度 (width: 270px; padding: 15px;)，還原 MON 修長比例。
-#   2. [顏色校正] 修復低級顏色反轉錯誤。台股：紅漲綠跌；美股：綠漲紅跌。
-#   3. [防錯機制] HTML 字串採單行緊密組合，徹底消滅 Markdown 誤判產生 </div> 的 Bug。
+#   1. [版面鎖定] 放棄 st.columns，改以 HTML flex-wrap 排版，強制鎖定小卡寬度為 280px，精準對齊 MON 視覺。
+#   2. [色彩修正] 重構顏色狀態機，嚴格區分台股(紅漲綠跌)與美股(綠漲紅跌)。
+#   3. [防護] 保持無縮排 HTML 字串，防止 Streamlit 解析錯誤。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 資料獲取與大盤補抓
 #   - 2️⃣ 介面渲染主程式 (分群)
-#   - 3️⃣ 市場群組渲染器 (無縮排 HTML 與顏色狀態機)
+#   - 3️⃣ 市場群組渲染器 (無縮排 HTML 與 280px 鎖定)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -38,10 +38,10 @@ def render_radar_dashboard():
     
     targets_df = engine_monitor.get_monitor_targets()
     if targets_df.empty:
-        st.info("💡 實戰彈藥庫目前為空，請先從左側「新增實戰監控」寫入標的。")
+        st.info("💡 實戰彈藥庫目前為空，請先從左側「新增即時監控」寫入標的。")
         return
 
-    with st.spinner("📡 正在擷取即時快照 (每 60 秒自動更新)..."):
+    with st.spinner("📡 正在擷取即時報價與掃描防線..."):
         quotes, alerts = get_cached_radar_data()
 
     tw_targets = targets_df[targets_df['market'] == 'tw']
@@ -56,7 +56,7 @@ def render_radar_dashboard():
         render_market_group("us", us_targets, quotes, alerts)
 
 # ==========================================================
-# 3️⃣ 市場群組渲染器 (無縮排 HTML 與顏色狀態機)
+# 3️⃣ 市場群組渲染器 (無縮排 HTML 與 280px 鎖定)
 # ==========================================================
 def render_market_group(market_type, targets_df, quotes, alerts):
     if market_type == "tw":
@@ -77,7 +77,7 @@ def render_market_group(market_type, targets_df, quotes, alerts):
         chg_amt = q['change_amt']
         chg_pct = q['change_pct']
         
-        # 大盤顏色校正：台股紅漲綠跌，美股綠漲紅跌
+        # 大盤紅綠燈邏輯 (台股紅漲綠跌，美股綠漲紅跌)
         if market_type == "tw":
             color = "#ef4444" if chg_amt > 0 else "#10b981"
         else:
@@ -96,8 +96,8 @@ def render_market_group(market_type, targets_df, quotes, alerts):
 </div>
 """, unsafe_allow_html=True)
 
-    # 綁死 Flexbox，卡片寬度由子元素 HTML 決定
-    cards_html = "<div style='display: flex; flex-wrap: wrap; gap: 15px;'>"
+    # 🚨 採用 MON 的 flex-wrap 原生排版
+    cards_html = "<div style='display: flex; flex-wrap: wrap; gap: 18px;'>"
     
     for _, row in targets_df.iterrows():
         ticker = row['ticker']
@@ -112,23 +112,24 @@ def render_market_group(market_type, targets_df, quotes, alerts):
             chg_amt = q['change_amt']
             chg_pct = q['change_pct']
             
-            # 🔥 終極顏色狀態機校正
-            if market_type == "tw":
-                # 台股：紅漲綠跌
-                if chg_amt > 0:
-                    bg_color, border_color, text_color, sign = "#2b1819", "#5a262c", "#ef4444", "+"
-                elif chg_amt < 0:
-                    bg_color, border_color, text_color, sign = "#18241d", "#1f4738", "#10b981", ""
-                else:
-                    bg_color, border_color, text_color, sign = "#1c191b", "#3d2a2e", "#cbd5e1", ""
+            is_tw = market_type == "tw"
+            
+            # 🔥 嚴格修正的漲跌狀態機
+            if chg_amt > 0:
+                sign = "+"
+                if is_tw: # 台股紅漲
+                    bg_color = "#2b1819" ; border_color = "#5a262c" ; text_color = "#ef4444" 
+                else:     # 美股綠漲
+                    bg_color = "#18241d" ; border_color = "#1f4738" ; text_color = "#10b981"
+            elif chg_amt < 0:
+                sign = ""
+                if is_tw: # 台股綠跌
+                    bg_color = "#18241d" ; border_color = "#1f4738" ; text_color = "#10b981"
+                else:     # 美股紅跌
+                    bg_color = "#2b1819" ; border_color = "#5a262c" ; text_color = "#ef4444"
             else:
-                # 美股：綠漲紅跌
-                if chg_amt > 0:
-                    bg_color, border_color, text_color, sign = "#18241d", "#1f4738", "#10b981", "+"
-                elif chg_amt < 0:
-                    bg_color, border_color, text_color, sign = "#2b1819", "#5a262c", "#ef4444", ""
-                else:
-                    bg_color, border_color, text_color, sign = "#1c191b", "#3d2a2e", "#cbd5e1", ""
+                sign = ""
+                bg_color = "#1c191b" ; border_color = "#3d2a2e" ; text_color = "#cbd5e1"
                 
             chg_str = f"{sign}{chg_amt:.2f} ({sign}{chg_pct:.2f}%)"
             
@@ -141,10 +142,23 @@ def render_market_group(market_type, targets_df, quotes, alerts):
             en_raw = row['entry_prices'] if pd.notna(row['entry_prices']) and row['entry_prices'] else "--"
             ex_raw = row['exit_prices'] if pd.notna(row['exit_prices']) and row['exit_prices'] else "--"
 
-            # 🚨 MON 黃金比例：width 270px, padding 15px, 單行 HTML 杜絕換行解析錯誤
-            cards_html += f"""<div style="width: 270px; min-width: 270px; background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 8px; padding: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;"><div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{clean_ticker} {clean_name}</div><div style="font-size: 2.1rem; font-weight: 800; color: #38bdf8; margin-bottom: 16px;">${curr:.2f}</div><div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;"><div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">昨收： <span style="color: #f8fafc; margin-left: 5px;">${prev:.2f}</span></div><div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">開盤： <span style="color: #f8fafc; margin-left: 5px;">${open_p:.2f}</span></div><div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">漲幅： <span style="color: {text_color}; margin-left: 5px;">{chg_str}</span></div></div><div style="border-top: 1px dashed #475569; padding-top: 12px; text-align: center; color: #64748b; font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">門檻: {th_raw}% | 進場: ${en_raw} | 出場: ${ex_raw}</div>{badge_html}</div>"""
+            # 🚨 絕無縮排，強制鎖死 width: 280px，精準對齊 MON
+            cards_html += f"""<div style="width: 280px; min-width: 280px; background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
+<div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{clean_ticker} {clean_name}</div>
+<div style="font-size: 2.1rem; font-weight: 800; color: #38bdf8; margin-bottom: 16px;">${curr:.2f}</div>
+<div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+<div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">昨收： <span style="color: #f8fafc; margin-left: 5px;">${prev:.2f}</span></div>
+<div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">開盤： <span style="color: #f8fafc; margin-left: 5px;">${open_p:.2f}</span></div>
+<div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">漲幅： <span style="color: {text_color}; margin-left: 5px;">{chg_str}</span></div>
+</div>
+<div style="border-top: 1px dashed #475569; padding-top: 12px; text-align: center; color: #64748b; font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">門檻: {th_raw}% | 進場: ${en_raw} | 出場: ${ex_raw}</div>
+{badge_html}
+</div>"""
         else:
-            cards_html += f"""<div style="width: 270px; min-width: 270px; background-color: #1c191b; border: 1px solid #3d2a2e; border-radius: 8px; padding: 15px;"><div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{clean_ticker} {clean_name}</div><div style="color: #64748b; font-size: 1rem; margin-top: 20px;">資料讀取中...</div></div>"""
+            cards_html += f"""<div style="width: 280px; min-width: 280px; background-color: #1c191b; border: 1px solid #3d2a2e; border-radius: 8px; padding: 18px;">
+<div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{clean_ticker} {clean_name}</div>
+<div style="color: #64748b; font-size: 1rem; margin-top: 20px;">資料讀取中...</div>
+</div>"""
             
     cards_html += "</div>"
     st.markdown(cards_html, unsafe_allow_html=True)
