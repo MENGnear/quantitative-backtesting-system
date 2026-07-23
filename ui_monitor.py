@@ -2,16 +2,16 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.7.0 (Phase 5: 美股標題智慧精簡)
+# 程式版本 : ui_v1.8.0 (Phase 5: 動態快取金鑰與智慧標題去重)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [顯示優化] 新增字串比對邏輯，當股票代碼與顯示名稱相同時(如 NVDA)，小卡只顯示一次，避免出現「NVDA NVDA」。
-#   2. [架構鎖定] 維持 textwrap.dedent 的無縮排防護與 Flexbox 280px 死鎖設計。
+#   1. [快取解套] 將 tickers_tuple 導入 st.cache_data 裝飾器，確保每次新增股票時動態破除舊快取，秒速顯示新小卡。
+#   2. [顯示優化] 強化標題智慧去重邏輯，徹底根除「NVDA NVDA」等重複字眼。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 資料獲取與大盤補抓
+#   - 1️⃣ 資料獲取與動態快取防護
 #   - 2️⃣ 介面渲染主程式
-#   - 3️⃣ 市場群組渲染器 (🔥 V1.7.0 標題去重邏輯)
+#   - 3️⃣ 市場群組渲染器 (智慧去重與 Dedent 防護)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -21,10 +21,11 @@ import textwrap
 from core import engine_monitor
 
 # ==========================================================
-# 1️⃣ 資料獲取與大盤補抓
+# 1️⃣ 資料獲取與動態快取防護
 # ==========================================================
 @st.cache_data(ttl=60, show_spinner=False)
-def get_cached_radar_data():
+def get_cached_radar_data(tickers_tuple):
+    """🔥 導入 tickers_tuple 參數，確保代碼改變時立刻作廢舊快取，解決新增卡死"""
     quotes, alerts = engine_monitor.run_radar_scan()
     indices = engine_monitor.fetch_realtime_quotes(['^TWII', '^IXIC'])
     quotes.update(indices)
@@ -41,8 +42,11 @@ def render_radar_dashboard():
         st.info("💡 實戰彈藥庫目前為空，請先從左側「新增即時監控」寫入標的。")
         return
 
+    # 取得當前清單的 tuple 傳入快取中
+    current_tickers = tuple(targets_df['ticker'].tolist())
+
     with st.spinner("📡 正在擷取即時報價與掃描防線..."):
-        quotes, alerts = get_cached_radar_data()
+        quotes, alerts = get_cached_radar_data(current_tickers)
 
     tw_targets = targets_df[targets_df['market'] == 'tw']
     us_targets = targets_df[targets_df['market'] == 'us']
@@ -101,10 +105,15 @@ def render_market_group(market_type, targets_df, quotes, alerts):
     for _, row in targets_df.iterrows():
         ticker = row['ticker']
         clean_ticker = ticker.replace('.TW', '')
-        clean_name = row['display_name']
+        clean_name = str(row['display_name']).strip()
 
-        # 🔥 V1.7.0 新增：美股標題去重邏輯
-        display_title = clean_ticker if clean_ticker == clean_name else f"{clean_ticker} {clean_name}"
+        # 🔥 嚴格智慧去重邏輯：杜絕 "NVDA NVDA" 或 "2330.TW 2330 台積電"
+        if not clean_name or clean_name == ticker or clean_name == clean_ticker:
+            display_title = clean_ticker
+        elif clean_name.startswith(clean_ticker):
+            display_title = clean_name
+        else:
+            display_title = f"{clean_ticker} {clean_name}"
 
         if ticker in quotes:
             q = quotes[ticker]
