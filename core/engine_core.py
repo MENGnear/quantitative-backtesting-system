@@ -2,15 +2,15 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.6.0 (Phase 5: 重返 MON 批次安全架構)
+# 程式版本 : monitor_v1.6.1 (Phase 5: 批次下載與穩定性強化)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [架構還原] 放棄易被 Yahoo 阻擋的 fast_info，全面回歸 MON 原始的 yf.download 批次併發架構 (Session Pooling)。
-#   2. [防呆精算] 在 DataFrame 中針對單一股票獨立執行 .dropna()，完美避開台美股時差/休市造成的空值干擾，告別無盡的轉圈卡頓。
+#   1. [穩定性] 維持 MON 官方 yf.download 批次併發架構，確保連線不被 Yahoo 封鎖。
+#   2. [防呆精算] 針對單一股票獨立執行 .dropna()，完美避開台美股時差造成的空值干擾。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 基礎環境與冷卻記憶體初始化
-#   - 2️⃣ 高頻報價與資料解析模組 (🔥 V1.6.0 批次安全下載與獨立過濾)
+#   - 2️⃣ 高頻報價與資料解析模組 (批次安全下載)
 #   - 3️⃣ 警報觸發與冷卻邏輯
 #   - 4️⃣ 引擎主程序
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
@@ -41,7 +41,7 @@ def get_monitor_targets():
         return pd.read_sql_query("SELECT * FROM monitor_pool", conn)
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組 (🔥 V1.6.0 批次安全下載)
+# 2️⃣ 高頻報價與資料解析模組
 # ==========================================================
 def fetch_realtime_quotes(tickers):
     """回歸 MON 的官方批次下載，避免單檔狂敲導致的 API 封鎖"""
@@ -50,7 +50,6 @@ def fetch_realtime_quotes(tickers):
         return quotes
         
     try:
-        # 使用 threads=True 進行合法且極速的批次請求
         data = yf.download(tickers, period="5d", progress=False, threads=True)
         if data.empty:
             return quotes
@@ -59,7 +58,6 @@ def fetch_realtime_quotes(tickers):
         
         for ticker in tickers:
             try:
-                # 🔥 MON 關鍵邏輯：針對每一檔股票「獨立」過濾空值，絕不互相干擾
                 if is_multi:
                     if 'Close' in data and ticker in data['Close']:
                         close_series = data['Close'][ticker].dropna()
