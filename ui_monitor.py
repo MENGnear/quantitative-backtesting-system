@@ -2,16 +2,16 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.6.0 (Phase 5: HTML 安全防護版)
+# 程式版本 : ui_v1.7.0 (Phase 5: 美股標題智慧精簡)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [防護升級] 全面導入 textwrap.dedent，確保所有 HTML 小卡代碼在輸出時毫無縮排，徹底根除 </div> 亂碼問題。
-#   2. [版面鎖定] 維持 Flexbox 原生排版與 280px 死鎖寬度，確保 MON 黃金比例。
+#   1. [顯示優化] 新增字串比對邏輯，當股票代碼與顯示名稱相同時(如 NVDA)，小卡只顯示一次，避免出現「NVDA NVDA」。
+#   2. [架構鎖定] 維持 textwrap.dedent 的無縮排防護與 Flexbox 280px 死鎖設計。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 資料獲取與大盤補抓
 #   - 2️⃣ 介面渲染主程式
-#   - 3️⃣ 市場群組渲染器 (🔥 V1.6.0 Dedent 防護)
+#   - 3️⃣ 市場群組渲染器 (🔥 V1.7.0 標題去重邏輯)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -103,6 +103,9 @@ def render_market_group(market_type, targets_df, quotes, alerts):
         clean_ticker = ticker.replace('.TW', '')
         clean_name = row['display_name']
 
+        # 🔥 V1.7.0 新增：美股標題去重邏輯
+        display_title = clean_ticker if clean_ticker == clean_name else f"{clean_ticker} {clean_name}"
+
         if ticker in quotes:
             q = quotes[ticker]
             curr = q['current']
@@ -140,10 +143,9 @@ def render_market_group(market_type, targets_df, quotes, alerts):
             en_raw = row['entry_prices'] if pd.notna(row['entry_prices']) and row['entry_prices'] else "--"
             ex_raw = row['exit_prices'] if pd.notna(row['exit_prices']) and row['exit_prices'] else "--"
 
-            # 🔥 嚴格使用 textwrap.dedent 保護每張卡片的 HTML，杜絕縮排破圖
             card_html = textwrap.dedent(f"""
             <div style="width: 280px; min-width: 280px; background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
-            <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{clean_ticker} {clean_name}</div>
+            <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
             <div style="font-size: 2.1rem; font-weight: 800; color: #38bdf8; margin-bottom: 16px;">${curr:.2f}</div>
             <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
             <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">昨收： <span style="color: #f8fafc; margin-left: 5px;">${prev:.2f}</span></div>
@@ -159,7 +161,7 @@ def render_market_group(market_type, targets_df, quotes, alerts):
         else:
             card_loading = textwrap.dedent(f"""
             <div style="width: 280px; min-width: 280px; background-color: #1c191b; border: 1px solid #3d2a2e; border-radius: 8px; padding: 18px;">
-            <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{clean_ticker} {clean_name}</div>
+            <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
             <div style="color: #64748b; font-size: 1rem; margin-top: 20px;">資料讀取中...</div>
             </div>
             """).strip()
