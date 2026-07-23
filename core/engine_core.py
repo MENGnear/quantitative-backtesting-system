@@ -2,15 +2,15 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.5.0 (Phase 5: MON 官方快取與多線程)
+# 程式版本 : monitor_v1.6.0 (Phase 5: 重返 MON 批次安全架構)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [數值精準] 捨棄歷史陣列，完全回歸 MON 獲取 previous_close 邏輯，徹底解決除權息/假日的漲跌誤判。
-#   2. [極速併發] 使用 ThreadPoolExecutor，台美股報價同步併發，解決排隊卡頓問題。
+#   1. [架構還原] 放棄易被 Yahoo 阻擋的 fast_info，全面回歸 MON 原始的 yf.download 批次併發架構 (Session Pooling)。
+#   2. [防呆精算] 在 DataFrame 中針對單一股票獨立執行 .dropna()，完美避開台美股時差/休市造成的空值干擾，告別無盡的轉圈卡頓。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 基礎環境與冷卻記憶體初始化
-#   - 2️⃣ 高頻報價與資料解析模組 (🔥 V1.5.0 併發快取)
+#   - 2️⃣ 高頻報價與資料解析模組 (🔥 V1.6.0 批次安全下載與獨立過濾)
 #   - 3️⃣ 警報觸發與冷卻邏輯
 #   - 4️⃣ 引擎主程序
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
@@ -22,7 +22,6 @@ import yfinance as yf
 import datetime
 import os
 import logging
-import concurrent.futures
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -42,48 +41,55 @@ def get_monitor_targets():
         return pd.read_sql_query("SELECT * FROM monitor_pool", conn)
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組
+# 2️⃣ 高頻報價與資料解析模組 (🔥 V1.6.0 批次安全下載)
 # ==========================================================
-def fetch_single_quote(ticker):
-    """MON 單一標的報價精準抓取"""
-    try:
-        t = yf.Ticker(ticker)
-        fi = t.fast_info
-        
-        curr = float(fi.last_price)
-        prev = float(fi.previous_close)
-        
-        try:
-            open_p = float(fi.open)
-        except Exception:
-            open_p = prev 
-            
-        change_amt = curr - prev
-        change_pct = (change_amt / prev * 100) if prev > 0 else 0.0
-        
-        return ticker, {
-            'current': round(curr, 2),
-            'prev': round(prev, 2),
-            'open': round(open_p, 2),
-            'change_amt': round(change_amt, 2),
-            'change_pct': round(change_pct, 2)
-        }
-    except Exception:
-        return ticker, None
-
 def fetch_realtime_quotes(tickers):
-    """MON 極速併發架構，瞬間同步載入所有標的"""
+    """回歸 MON 的官方批次下載，避免單檔狂敲導致的 API 封鎖"""
     quotes = {}
     if not tickers:
         return quotes
         
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        future_to_ticker = {executor.submit(fetch_single_quote, ticker): ticker for ticker in tickers}
-        for future in concurrent.futures.as_completed(future_to_ticker):
-            ticker, data = future.result()
-            if data:
-                quotes[ticker] = data
-                
+    try:
+        # 使用 threads=True 進行合法且極速的批次請求
+        data = yf.download(tickers, period="5d", progress=False, threads=True)
+        if data.empty:
+            return quotes
+            
+        is_multi = isinstance(data.columns, pd.MultiIndex)
+        
+        for ticker in tickers:
+            try:
+                # 🔥 MON 關鍵邏輯：針對每一檔股票「獨立」過濾空值，絕不互相干擾
+                if is_multi:
+                    if 'Close' in data and ticker in data['Close']:
+                        close_series = data['Close'][ticker].dropna()
+                        open_series = data['Open'][ticker].dropna()
+                    else:
+                        continue
+                else:
+                    close_series = data['Close'].dropna()
+                    open_series = data['Open'].dropna()
+                    
+                if len(close_series) >= 2:
+                    curr = float(close_series.iloc[-1])
+                    prev = float(close_series.iloc[-2])
+                    open_p = float(open_series.iloc[-1]) if len(open_series) >= 1 else prev
+                    
+                    change_amt = curr - prev
+                    change_pct = (change_amt / prev * 100) if prev > 0 else 0.0
+                    
+                    quotes[ticker] = {
+                        'current': round(curr, 2),
+                        'prev': round(prev, 2),
+                        'open': round(open_p, 2),
+                        'change_amt': round(change_amt, 2),
+                        'change_pct': round(change_pct, 2)
+                    }
+            except Exception:
+                pass
+    except Exception:
+        pass
+        
     return quotes
 
 def parse_custom_values(val_str):
