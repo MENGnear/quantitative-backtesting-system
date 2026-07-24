@@ -2,17 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.6.0 (Phase 5: 強制清除快取與側邊欄去重)
+# 程式版本 : QBS_v4.7.0 (Phase 6: UX 連動與防呆機制升級)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [快取清創] 在新增與刪除動作成功後，強制執行 st.cache_data.clear()，徹底根除資料讀取中卡死問題。
-#   2. [顯示優化] 側邊欄下拉選單加入智慧去重，拒絕冗長重複字串。
+#   1. [市場脫鉤] 新增標的強制依循 Radio Button 選擇，不再被後綴詞干擾 (台股自動補 .TW，美股自動剔除)。
+#   2. [連動互斥] 導入 on_change Callback，達成「下拉選單」與「手動輸入」的翹翹板互斥清空效應。
+#   3. [防呆驗證] 新增監控條件攔截門，至少需輸入一項條件 (門檻/進場/出場) 才能允許寫入資料庫。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
-#   - 2️⃣ 動態載入外部深色視覺 CSS 樣板
+#   - 2️⃣ UX 連動回呼函式 (🔥 V4.7.0 新增)
 #   - 3️⃣ 系統全域常數與資料庫初始化
-#   - 4️⃣ 側邊欄控制面板 (🔥 V4.6.0 強制清除與去重)
+#   - 4️⃣ 側邊欄控制面板 (🔥 V4.7.0 防呆與互斥選單)
 #   - 5️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -59,6 +60,25 @@ if "db_initialized" not in st.session_state:
 if "monitoring" not in st.session_state: 
     st.session_state.monitoring = False
 
+# ==========================================================
+# 2️⃣ UX 連動回呼函式 (🔥 互斥清空邏輯)
+# ==========================================================
+# 初始化狀態變數
+if "sel_tw_val" not in st.session_state: st.session_state.sel_tw_val = "--- 請選擇 ---"
+if "sel_us_val" not in st.session_state: st.session_state.sel_us_val = "--- 請選擇 ---"
+if "manual_sym_val" not in st.session_state: st.session_state.manual_sym_val = ""
+
+# 當操作下拉選單時，清空手動輸入
+def on_sel_change():
+    st.session_state.manual_sym_val = ""
+
+# 當手動輸入時，重置所有下拉選單
+def on_manual_change():
+    if st.session_state.manual_sym_val.strip() != "":
+        st.session_state.sel_tw_val = "--- 請選擇 ---"
+        st.session_state.sel_us_val = "--- 請選擇 ---"
+
+
 def sidebar_header(icon, title):
     st.markdown(f"""
         <div style="margin-top: 15px; margin-bottom: 12px;">
@@ -84,7 +104,6 @@ with st.sidebar:
         monitor_items = db_manager.get_all_monitor_items()
         monitor_tickers = [item['ticker'] for item in monitor_items]
         
-        # 🔥 側邊欄下拉選單智慧去重
         monitor_map = {}
         for item in monitor_items:
             t = item['ticker']
@@ -111,12 +130,13 @@ with st.sidebar:
             sidebar_header("➕", "新增即時監控")
             market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_a")
             
+            # 🔥 綁定 callback 實現互斥連動
             if "台灣" in market_choice:
-                selected_db = st.selectbox("tw 資料庫選取", ["--- 請選擇 ---", "2330.TW", "2454.TW"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_tw_a")
+                selected_db = st.selectbox("tw 資料庫選取", ["--- 請選擇 ---", "2330.TW", "2454.TW"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_tw_val", on_change=on_sel_change)
             else:
-                selected_db = st.selectbox("us 資料庫選取", ["--- 請選擇 ---", "AAPL", "NVDA"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_a")
+                selected_db = st.selectbox("us 資料庫選取", ["--- 請選擇 ---", "AAPL", "NVDA"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_val", on_change=on_sel_change)
                 
-            new_sym = st.text_input("或 手動輸入代碼", value="", placeholder="例: 6531", key="sym_manual_a").strip().upper()
+            new_sym = st.text_input("或 手動輸入代碼", placeholder="例: 6531", key="manual_sym_val", on_change=on_manual_change).strip().upper()
             
             st.markdown("<div style='font-size:0.85rem; color:#94a3b8; margin-bottom:5px;'>監控條件設定：</div>", unsafe_allow_html=True)
             th_text = st.text_input("提醒門檻 (%)", value="", placeholder="例: 5, 10", key="th_a", label_visibility="collapsed")
@@ -124,45 +144,55 @@ with st.sidebar:
             exit_text = st.text_input("出場提醒 ($)", value="", placeholder="出場價 (例: 190)", key="exit_a", label_visibility="collapsed")
             
             if st.button("確認新增", use_container_width=True, key="btn_add_a"):
-                target_sym = new_sym if new_sym else (selected_db if selected_db != "--- 請選擇 ---" else None)
-                if target_sym:
-                    if target_sym[0].isdigit() and ".TW" not in target_sym: target_sym += ".TW"
-                    mkt = "tw" if "台灣" in market_choice or ".TW" in target_sym else "us"
-                    
-                    display_name = ""
-                    is_valid = False
-                    
-                    with st.spinner(f"🔍 驗證標的與獲取名稱中..."):
-                        try:
-                            if ".TW" in target_sym:
-                                url = f"https://tw.stock.yahoo.com/quote/{target_sym}"
-                                res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
-                                soup = BeautifulSoup(res.text, 'html.parser')
-                                title = soup.find('title').text
-                                if " - " in title:
-                                    clean_title = title.split(" - ")[0].split("(")[0]
-                                    name_part = clean_title.replace(target_sym.replace('.TW', ''), '').strip()
-                                    if name_part:
-                                        display_name = name_part
+                # 🔥 防呆驗證：至少需填寫一項監控條件
+                if not (th_text.strip() or entry_text.strip() or exit_text.strip()):
+                    st.warning("⚠️ 請至少輸入一項監控條件 (門檻%、進場價或出場價)！")
+                else:
+                    target_sym = new_sym if new_sym else (selected_db if selected_db != "--- 請選擇 ---" else None)
+                    if target_sym:
+                        # 🔥 絕對市場綁定邏輯 (與手動輸入脫鉤)
+                        mkt = "tw" if "台灣" in market_choice else "us"
+                        
+                        if mkt == "tw":
+                            if not target_sym.endswith(".TW"): 
+                                target_sym += ".TW"
+                        else:
+                            target_sym = target_sym.replace(".TW", "") # 美股強制拔除後綴
+                        
+                        display_name = ""
+                        is_valid = False
+                        
+                        with st.spinner(f"🔍 驗證標的與獲取名稱中..."):
+                            try:
+                                if mkt == "tw":
+                                    url = f"https://tw.stock.yahoo.com/quote/{target_sym}"
+                                    res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
+                                    soup = BeautifulSoup(res.text, 'html.parser')
+                                    title = soup.find('title').text
+                                    if " - " in title:
+                                        clean_title = title.split(" - ")[0].split("(")[0]
+                                        name_part = clean_title.replace(target_sym.replace('.TW', ''), '').strip()
+                                        if name_part:
+                                            display_name = name_part
+                                            is_valid = True
+                                else:
+                                    fi = yf.Ticker(target_sym).fast_info
+                                    if fi.last_price is not None:
+                                        display_name = target_sym
                                         is_valid = True
-                            else:
-                                fi = yf.Ticker(target_sym).fast_info
-                                if fi.last_price is not None:
-                                    display_name = target_sym
-                                    is_valid = True
-                        except Exception:
-                            is_valid = False
-                    
-                    if is_valid:
-                        db_manager.add_monitor_item(target_sym, display_name=display_name, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
+                            except Exception:
+                                is_valid = False
                         
-                        # 🔥 關鍵修復：新增成功後強制炸掉舊快取，保證小卡秒出
-                        st.cache_data.clear()
-                        
-                        st.success(f"✅ {display_name} ({target_sym}) 新增成功！")
-                        st.rerun()
-                    else:
-                        st.error("❌ 查無此股票或獲取失敗，拒絕寫入！")
+                        if is_valid:
+                            db_manager.add_monitor_item(target_sym, display_name=display_name, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
+                            st.cache_data.clear()
+                            
+                            # 新增成功後，重置手動輸入框狀態
+                            st.session_state.manual_sym_val = ""
+                            st.success(f"✅ {display_name} ({target_sym}) 新增成功！")
+                            st.rerun()
+                        else:
+                            st.error("❌ 查無此股票或獲取失敗，拒絕寫入！")
             
         with st.container(border=True):
             sidebar_header("📥", "回測結果匯入")
@@ -175,10 +205,7 @@ with st.sidebar:
             if st.button("確認刪除", use_container_width=True, key="btn_del_a"):
                 if del_sym != "--- 請選擇 ---":
                     db_manager.remove_monitor_item(del_sym)
-                    
-                    # 🔥 關鍵修復：刪除成功後強制炸掉舊快取
                     st.cache_data.clear()
-                    
                     st.success(f"🗑️ 已移除標的")
                     st.rerun()
 
