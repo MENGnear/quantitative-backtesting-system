@@ -2,18 +2,17 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.7.0 (Phase 6: UX 連動與防呆機制升級)
+# 程式版本 : QBS_v4.7.1 (Phase 6: Streamlit 生命週期報錯修復)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [市場脫鉤] 新增標的強制依循 Radio Button 選擇，不再被後綴詞干擾 (台股自動補 .TW，美股自動剔除)。
-#   2. [連動互斥] 導入 on_change Callback，達成「下拉選單」與「手動輸入」的翹翹板互斥清空效應。
-#   3. [防呆驗證] 新增監控條件攔截門，至少需輸入一項條件 (門檻/進場/出場) 才能允許寫入資料庫。
+#   1. [Bug 修復] 解決 StreamlitAPIException 報錯。將新增成功後的「直接清空元件值」改為「發送清空信號燈 (clear_input_flag)」，順應 Streamlit 底層渲染規則。
+#   2. [功能保留] 完整保留 V4.7.0 的防呆機制、互斥連動與市場脫鉤邏輯。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
-#   - 2️⃣ UX 連動回呼函式 (🔥 V4.7.0 新增)
+#   - 2️⃣ UX 連動回呼函式與信號燈初始化 (🔥 V4.7.1 新增信號燈)
 #   - 3️⃣ 系統全域常數與資料庫初始化
-#   - 4️⃣ 側邊欄控制面板 (🔥 V4.7.0 防呆與互斥選單)
+#   - 4️⃣ 側邊欄控制面板 (🔥 V4.7.1 信號攔截與發送)
 #   - 5️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -61,12 +60,14 @@ if "monitoring" not in st.session_state:
     st.session_state.monitoring = False
 
 # ==========================================================
-# 2️⃣ UX 連動回呼函式 (🔥 互斥清空邏輯)
+# 2️⃣ UX 連動回呼函式與信號燈初始化
 # ==========================================================
 # 初始化狀態變數
 if "sel_tw_val" not in st.session_state: st.session_state.sel_tw_val = "--- 請選擇 ---"
 if "sel_us_val" not in st.session_state: st.session_state.sel_us_val = "--- 請選擇 ---"
 if "manual_sym_val" not in st.session_state: st.session_state.manual_sym_val = ""
+# 🔥 V4.7.1 新增：用來通知系統清空輸入框的隱形信號燈
+if "clear_input_flag" not in st.session_state: st.session_state.clear_input_flag = False
 
 # 當操作下拉選單時，清空手動輸入
 def on_sel_change():
@@ -130,11 +131,15 @@ with st.sidebar:
             sidebar_header("➕", "新增即時監控")
             market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_a")
             
-            # 🔥 綁定 callback 實現互斥連動
             if "台灣" in market_choice:
                 selected_db = st.selectbox("tw 資料庫選取", ["--- 請選擇 ---", "2330.TW", "2454.TW"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_tw_val", on_change=on_sel_change)
             else:
                 selected_db = st.selectbox("us 資料庫選取", ["--- 請選擇 ---", "AAPL", "NVDA"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_val", on_change=on_sel_change)
+                
+            # 🔥 V4.7.1 關鍵攔截：如果在上一輪新增成功並發送了信號，就在元件渲染前合法清空它
+            if st.session_state.clear_input_flag:
+                st.session_state.manual_sym_val = ""
+                st.session_state.clear_input_flag = False
                 
             new_sym = st.text_input("或 手動輸入代碼", placeholder="例: 6531", key="manual_sym_val", on_change=on_manual_change).strip().upper()
             
@@ -144,20 +149,18 @@ with st.sidebar:
             exit_text = st.text_input("出場提醒 ($)", value="", placeholder="出場價 (例: 190)", key="exit_a", label_visibility="collapsed")
             
             if st.button("確認新增", use_container_width=True, key="btn_add_a"):
-                # 🔥 防呆驗證：至少需填寫一項監控條件
                 if not (th_text.strip() or entry_text.strip() or exit_text.strip()):
                     st.warning("⚠️ 請至少輸入一項監控條件 (門檻%、進場價或出場價)！")
                 else:
                     target_sym = new_sym if new_sym else (selected_db if selected_db != "--- 請選擇 ---" else None)
                     if target_sym:
-                        # 🔥 絕對市場綁定邏輯 (與手動輸入脫鉤)
                         mkt = "tw" if "台灣" in market_choice else "us"
                         
                         if mkt == "tw":
                             if not target_sym.endswith(".TW"): 
                                 target_sym += ".TW"
                         else:
-                            target_sym = target_sym.replace(".TW", "") # 美股強制拔除後綴
+                            target_sym = target_sym.replace(".TW", "")
                         
                         display_name = ""
                         is_valid = False
@@ -187,8 +190,9 @@ with st.sidebar:
                             db_manager.add_monitor_item(target_sym, display_name=display_name, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
                             st.cache_data.clear()
                             
-                            # 新增成功後，重置手動輸入框狀態
-                            st.session_state.manual_sym_val = ""
+                            # 🔥 V4.7.1 發送清空信號燈：通知系統在下次載入時清空手動輸入框
+                            st.session_state.clear_input_flag = True
+                            
                             st.success(f"✅ {display_name} ({target_sym}) 新增成功！")
                             st.rerun()
                         else:
@@ -289,7 +293,7 @@ with st.sidebar:
             if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
 
     # ==========================================
-    # 🌟 版本控制塊 (絕對置中與去縮排)
+    # 🌟 版本控制塊
     # ==========================================
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     tpe_now = now_utc.astimezone(pytz.timezone('Asia/Taipei'))
