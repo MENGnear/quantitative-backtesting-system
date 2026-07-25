@@ -2,18 +2,20 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.8.0 (Phase 6: 側邊欄視覺緊湊化)
+# 程式版本 : QBS_v4.9.0 (Phase 6: 動態選單與記憶機制)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [版面優化] 修正 sidebar_header 函式，拔除 margin-top，並導入 textwrap.dedent 消除 Markdown 引擎產生的隱形空白行。頁面 A 與 B 同步生效。
-#   2. [功能保留] 完整繼承 V4.7.1 的生命週期防護、防呆攔截與快取動態清除。
+#   1. [動態記憶] 導入 stock_dict.json 本地字典，取代硬編碼。成功驗證的股票將自動註冊，成為下拉選單的永久選項。
+#   2. [頁面同步] 將頁面 A 的「下拉選單與手動輸入」互斥連動 UX，完美移植並同步至頁面 B (回測標的新增)。
+#   3. [功能保留] 完整繼承視覺緊湊化、生命週期防護與快取動態清除。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
-#   - 2️⃣ UX 連動回呼函式與信號燈初始化
-#   - 3️⃣ 系統全域常數與共用 UI 渲染 (🔥 V4.8.0 標題空白行修復)
-#   - 4️⃣ 側邊欄控制面板 
-#   - 5️⃣ 主畫面戰情室
+#   - 2️⃣ 動態字典管理 (🔥 V4.9.0 新增)
+#   - 3️⃣ UX 連動回呼函式與信號燈初始化 (🔥 擴充頁面 B)
+#   - 4️⃣ 系統全域常數與共用 UI 渲染
+#   - 5️⃣ 側邊欄控制面板 (🔥 V4.9.0 動態選單與同步)
+#   - 6️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -51,6 +53,7 @@ load_css(os.path.join("assets", "style.css"))
 APP_VERSION = "QBS_V3.1.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
+DICT_PATH = os.path.join(BASE_DIR, "config", "stock_dict.json")
 
 if "db_initialized" not in st.session_state:
     db_manager.init_db()
@@ -60,26 +63,62 @@ if "monitoring" not in st.session_state:
     st.session_state.monitoring = False
 
 # ==========================================================
-# 2️⃣ UX 連動回呼函式與信號燈初始化
+# 2️⃣ 動態字典管理 (🔥 V4.9.0 新增)
 # ==========================================================
+def load_stock_dict():
+    if not os.path.exists(os.path.dirname(DICT_PATH)):
+        os.makedirs(os.path.dirname(DICT_PATH))
+    if os.path.exists(DICT_PATH):
+        try:
+            with open(DICT_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except: pass
+    # 預設種子資料 (若檔案不存在)
+    default_dict = {"2330.TW": "2330 台積電", "2454.TW": "2454 聯發科", "AAPL": "AAPL", "NVDA": "NVDA"}
+    save_stock_dict(default_dict)
+    return default_dict
+
+def save_stock_dict(data):
+    with open(DICT_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+stock_dict = load_stock_dict()
+
+# ==========================================================
+# 3️⃣ UX 連動回呼函式與信號燈初始化
+# ==========================================================
+# 頁面 A 狀態
 if "sel_tw_val" not in st.session_state: st.session_state.sel_tw_val = "--- 請選擇 ---"
 if "sel_us_val" not in st.session_state: st.session_state.sel_us_val = "--- 請選擇 ---"
 if "manual_sym_val" not in st.session_state: st.session_state.manual_sym_val = ""
 if "clear_input_flag" not in st.session_state: st.session_state.clear_input_flag = False
 
+# 頁面 B 狀態
+if "sel_tw_val_b" not in st.session_state: st.session_state.sel_tw_val_b = "--- 請選擇 ---"
+if "sel_us_val_b" not in st.session_state: st.session_state.sel_us_val_b = "--- 請選擇 ---"
+if "manual_sym_val_b" not in st.session_state: st.session_state.manual_sym_val_b = ""
+if "clear_input_flag_b" not in st.session_state: st.session_state.clear_input_flag_b = False
+
+# 頁面 A Callbacks
 def on_sel_change():
     st.session_state.manual_sym_val = ""
-
 def on_manual_change():
     if st.session_state.manual_sym_val.strip() != "":
         st.session_state.sel_tw_val = "--- 請選擇 ---"
         st.session_state.sel_us_val = "--- 請選擇 ---"
 
+# 頁面 B Callbacks
+def on_sel_change_b():
+    st.session_state.manual_sym_val_b = ""
+def on_manual_change_b():
+    if st.session_state.manual_sym_val_b.strip() != "":
+        st.session_state.sel_tw_val_b = "--- 請選擇 ---"
+        st.session_state.sel_us_val_b = "--- 請選擇 ---"
+
 # ==========================================================
-# 3️⃣ 系統全域常數與共用 UI 渲染 (🔥 V4.8.0 標題空白行修復)
+# 4️⃣ 系統全域常數與共用 UI 渲染
 # ==========================================================
 def sidebar_header(icon, title):
-    # 🔥 關鍵修正：將 margin-top 歸零，並使用 dedent.strip() 防堵 Markdown 亂生換行，讓標題緊貼容器邊框
     header_html = textwrap.dedent(f"""
     <div style="margin-top: 0px; margin-bottom: 12px;">
         <span style="font-size: 1.05rem; font-weight: 700; color: #60a5fa; letter-spacing: 1px;">{icon} {title}</span>
@@ -88,10 +127,12 @@ def sidebar_header(icon, title):
     """).strip()
     st.markdown(header_html, unsafe_allow_html=True)
 
-test_display_map = {"2330.TW": "2330 台積電", "2454.TW": "2454 聯發科", "AAPL": "AAPL", "NVDA": "NVDA"}
+# 生成動態下拉選單陣列
+tw_options = ["--- 請選擇 ---"] + sorted([k for k in stock_dict.keys() if k.endswith(".TW")])
+us_options = ["--- 請選擇 ---"] + sorted([k for k in stock_dict.keys() if not k.endswith(".TW")])
 
 # ==========================================================
-# 4️⃣ 側邊欄控制面板
+# 5️⃣ 側邊欄控制面板
 # ==========================================================
 with st.sidebar:
     with st.container(border=True):
@@ -131,10 +172,11 @@ with st.sidebar:
             sidebar_header("➕", "新增即時監控")
             market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_a")
             
+            # 🔥 使用動態字典選單
             if "台灣" in market_choice:
-                selected_db = st.selectbox("tw 資料庫選取", ["--- 請選擇 ---", "2330.TW", "2454.TW"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_tw_val", on_change=on_sel_change)
+                selected_db = st.selectbox("tw 資料庫選取", tw_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_tw_val", on_change=on_sel_change)
             else:
-                selected_db = st.selectbox("us 資料庫選取", ["--- 請選擇 ---", "AAPL", "NVDA"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_val", on_change=on_sel_change)
+                selected_db = st.selectbox("us 資料庫選取", us_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_val", on_change=on_sel_change)
                 
             if st.session_state.clear_input_flag:
                 st.session_state.manual_sym_val = ""
@@ -154,12 +196,8 @@ with st.sidebar:
                     target_sym = new_sym if new_sym else (selected_db if selected_db != "--- 請選擇 ---" else None)
                     if target_sym:
                         mkt = "tw" if "台灣" in market_choice else "us"
-                        
-                        if mkt == "tw":
-                            if not target_sym.endswith(".TW"): 
-                                target_sym += ".TW"
-                        else:
-                            target_sym = target_sym.replace(".TW", "")
+                        if mkt == "tw" and not target_sym.endswith(".TW"): target_sym += ".TW"
+                        if mkt == "us": target_sym = target_sym.replace(".TW", "")
                         
                         display_name = ""
                         is_valid = False
@@ -186,6 +224,11 @@ with st.sidebar:
                                 is_valid = False
                         
                         if is_valid:
+                            # 🔥 自動註冊至動態字典
+                            if target_sym not in stock_dict or stock_dict[target_sym] != display_name:
+                                stock_dict[target_sym] = display_name
+                                save_stock_dict(stock_dict)
+
                             db_manager.add_monitor_item(target_sym, display_name=display_name, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
                             st.cache_data.clear()
                             st.session_state.clear_input_flag = True
@@ -217,7 +260,7 @@ with st.sidebar:
                 st.rerun()
 
     # ==========================================
-    # 🌟 頁面 B 專屬側邊欄
+    # 🌟 頁面 B 專屬側邊欄 (🔥 完整同步頁面 A 設計)
     # ==========================================
     elif current_page == "🎯 頁面 B : 策略回測戰情":
         backtest_items = db_manager.get_all_backtest_items()
@@ -231,15 +274,54 @@ with st.sidebar:
         with st.container(border=True):
             sidebar_header("➕", "新增回測標的")
             market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_b")
-            new_sym = st.text_input("輸入股票代碼", value="", placeholder="例: AAPL 或 2330", key="sym_manual_b").strip().upper()
+            
+            # 🔥 同步動態字典選單與連動
+            if "台灣" in market_choice:
+                selected_db_b = st.selectbox("tw 資料庫選取", tw_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_tw_val_b", on_change=on_sel_change_b)
+            else:
+                selected_db_b = st.selectbox("us 資料庫選取", us_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_val_b", on_change=on_sel_change_b)
+                
+            if st.session_state.clear_input_flag_b:
+                st.session_state.manual_sym_val_b = ""
+                st.session_state.clear_input_flag_b = False
+
+            new_sym_b = st.text_input("或 手動輸入代碼", placeholder="例: AAPL 或 2330", key="manual_sym_val_b", on_change=on_manual_change_b).strip().upper()
             
             if st.button("確認新增", use_container_width=True, key="btn_add_b"):
-                if new_sym:
-                    if new_sym[0].isdigit() and ".TW" not in new_sym: new_sym += ".TW"
-                    mkt = "tw" if "台灣" in market_choice or ".TW" in new_sym else "us"
-                    db_manager.add_backtest_item(new_sym, market=mkt)
-                    st.success(f"✅ {new_sym} 加入回測池！")
+                target_sym_b = new_sym_b if new_sym_b else (selected_db_b if selected_db_b != "--- 請選擇 ---" else None)
+                if target_sym_b:
+                    mkt = "tw" if "台灣" in market_choice else "us"
+                    if mkt == "tw" and not target_sym_b.endswith(".TW"): target_sym_b += ".TW"
+                    if mkt == "us": target_sym_b = target_sym_b.replace(".TW", "")
+
+                    # 輕量獲取名稱以同步字典
+                    display_name = target_sym_b
+                    with st.spinner("🔍 寫入標的與同步字典中..."):
+                        try:
+                            if mkt == "tw":
+                                url = f"https://tw.stock.yahoo.com/quote/{target_sym_b}"
+                                res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
+                                soup = BeautifulSoup(res.text, 'html.parser')
+                                title = soup.find('title').text
+                                if " - " in title:
+                                    clean_title = title.split(" - ")[0].split("(")[0]
+                                    name_part = clean_title.replace(target_sym_b.replace('.TW', ''), '').strip()
+                                    if name_part: display_name = name_part
+                            else:
+                                fi = yf.Ticker(target_sym_b).fast_info
+                                if fi.last_price is not None: display_name = target_sym_b
+                        except: pass
+
+                    if target_sym_b not in stock_dict or stock_dict[target_sym_b] != display_name:
+                        stock_dict[target_sym_b] = display_name
+                        save_stock_dict(stock_dict)
+
+                    db_manager.add_backtest_item(target_sym_b, market=mkt)
+                    st.session_state.clear_input_flag_b = True
+                    st.success(f"✅ {target_sym_b} 加入回測池！")
                     st.rerun()
+                else:
+                    st.warning("⚠️ 請選擇或輸入標的代碼！")
                     
         with st.container(border=True):
             sidebar_header("🗂️", "族群批次輸入")
@@ -308,7 +390,7 @@ with st.sidebar:
     st.markdown(version_html, unsafe_allow_html=True)
 
 # ==========================================================
-# 5️⃣ 主畫面戰情室
+# 6️⃣ 主畫面戰情室
 # ==========================================================
 st.markdown('<h1 class="main-title">📈 Quantitative Backtesting System (QBS)</h1>', unsafe_allow_html=True)
 
