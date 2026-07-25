@@ -2,20 +2,19 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.9.0 (Phase 6: 動態選單與記憶機制)
+# 程式版本 : QBS_v4.10.0 (Phase 6: 版本區塊視覺全面對齊 MON)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [動態記憶] 導入 stock_dict.json 本地字典，取代硬編碼。成功驗證的股票將自動註冊，成為下拉選單的永久選項。
-#   2. [頁面同步] 將頁面 A 的「下拉選單與手動輸入」互斥連動 UX，完美移植並同步至頁面 B (回測標的新增)。
-#   3. [功能保留] 完整繼承視覺緊湊化、生命週期防護與快取動態清除。
+#   1. [視覺對齊] 完美重現 MON 版本區塊質感：拔除硬寫死深色背景改為 transparent，調整字體色階（次要灰與高對比亮藍），精簡圖示，與側邊欄完美無縫融合。
+#   2. [功能保留] 完整繼承 V4.9.0 的動態字典記憶、頁面 A/B 同步連動、生命週期防護與快取動態清除。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
-#   - 2️⃣ 動態字典管理 (🔥 V4.9.0 新增)
-#   - 3️⃣ UX 連動回呼函式與信號燈初始化 (🔥 擴充頁面 B)
-#   - 4️⃣ 系統全域常數與共用 UI 渲染
-#   - 5️⃣ 側邊欄控制面板 (🔥 V4.9.0 動態選單與同步)
-#   - 6️⃣ 主畫面戰情室
+#   - 2️⃣ 動態字典管理 
+#   - 3️⃣ UX 連動回呼函式與信號燈初始化 
+#   - 4️⃣ 系統全域常數與共用 UI 渲染 
+#   - 5️⃣ 側邊欄控制面板 
+#   - 6️⃣ 主畫面戰情室與 MON 風格版本區塊 (🔥 V4.10.0 視覺更新)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -63,7 +62,7 @@ if "monitoring" not in st.session_state:
     st.session_state.monitoring = False
 
 # ==========================================================
-# 2️⃣ 動態字典管理 (🔥 V4.9.0 新增)
+# 2️⃣ 動態字典管理
 # ==========================================================
 def load_stock_dict():
     if not os.path.exists(os.path.dirname(DICT_PATH)):
@@ -73,7 +72,6 @@ def load_stock_dict():
             with open(DICT_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
         except: pass
-    # 預設種子資料 (若檔案不存在)
     default_dict = {"2330.TW": "2330 台積電", "2454.TW": "2454 聯發科", "AAPL": "AAPL", "NVDA": "NVDA"}
     save_stock_dict(default_dict)
     return default_dict
@@ -87,19 +85,16 @@ stock_dict = load_stock_dict()
 # ==========================================================
 # 3️⃣ UX 連動回呼函式與信號燈初始化
 # ==========================================================
-# 頁面 A 狀態
 if "sel_tw_val" not in st.session_state: st.session_state.sel_tw_val = "--- 請選擇 ---"
 if "sel_us_val" not in st.session_state: st.session_state.sel_us_val = "--- 請選擇 ---"
 if "manual_sym_val" not in st.session_state: st.session_state.manual_sym_val = ""
 if "clear_input_flag" not in st.session_state: st.session_state.clear_input_flag = False
 
-# 頁面 B 狀態
 if "sel_tw_val_b" not in st.session_state: st.session_state.sel_tw_val_b = "--- 請選擇 ---"
 if "sel_us_val_b" not in st.session_state: st.session_state.sel_us_val_b = "--- 請選擇 ---"
 if "manual_sym_val_b" not in st.session_state: st.session_state.manual_sym_val_b = ""
 if "clear_input_flag_b" not in st.session_state: st.session_state.clear_input_flag_b = False
 
-# 頁面 A Callbacks
 def on_sel_change():
     st.session_state.manual_sym_val = ""
 def on_manual_change():
@@ -107,7 +102,6 @@ def on_manual_change():
         st.session_state.sel_tw_val = "--- 請選擇 ---"
         st.session_state.sel_us_val = "--- 請選擇 ---"
 
-# 頁面 B Callbacks
 def on_sel_change_b():
     st.session_state.manual_sym_val_b = ""
 def on_manual_change_b():
@@ -127,7 +121,6 @@ def sidebar_header(icon, title):
     """).strip()
     st.markdown(header_html, unsafe_allow_html=True)
 
-# 生成動態下拉選單陣列
 tw_options = ["--- 請選擇 ---"] + sorted([k for k in stock_dict.keys() if k.endswith(".TW")])
 us_options = ["--- 請選擇 ---"] + sorted([k for k in stock_dict.keys() if not k.endswith(".TW")])
 
@@ -172,7 +165,6 @@ with st.sidebar:
             sidebar_header("➕", "新增即時監控")
             market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_a")
             
-            # 🔥 使用動態字典選單
             if "台灣" in market_choice:
                 selected_db = st.selectbox("tw 資料庫選取", tw_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_tw_val", on_change=on_sel_change)
             else:
@@ -224,7 +216,6 @@ with st.sidebar:
                                 is_valid = False
                         
                         if is_valid:
-                            # 🔥 自動註冊至動態字典
                             if target_sym not in stock_dict or stock_dict[target_sym] != display_name:
                                 stock_dict[target_sym] = display_name
                                 save_stock_dict(stock_dict)
@@ -260,7 +251,7 @@ with st.sidebar:
                 st.rerun()
 
     # ==========================================
-    # 🌟 頁面 B 專屬側邊欄 (🔥 完整同步頁面 A 設計)
+    # 🌟 頁面 B 專屬側邊欄
     # ==========================================
     elif current_page == "🎯 頁面 B : 策略回測戰情":
         backtest_items = db_manager.get_all_backtest_items()
@@ -275,7 +266,6 @@ with st.sidebar:
             sidebar_header("➕", "新增回測標的")
             market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_b")
             
-            # 🔥 同步動態字典選單與連動
             if "台灣" in market_choice:
                 selected_db_b = st.selectbox("tw 資料庫選取", tw_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_tw_val_b", on_change=on_sel_change_b)
             else:
@@ -294,7 +284,6 @@ with st.sidebar:
                     if mkt == "tw" and not target_sym_b.endswith(".TW"): target_sym_b += ".TW"
                     if mkt == "us": target_sym_b = target_sym_b.replace(".TW", "")
 
-                    # 輕量獲取名稱以同步字典
                     display_name = target_sym_b
                     with st.spinner("🔍 寫入標的與同步字典中..."):
                         try:
@@ -371,19 +360,19 @@ with st.sidebar:
             if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
 
     # ==========================================
-    # 🌟 版本控制塊
+    # 🌟 版本控制塊 (🔥 V4.10.0 對齊 MON 原版透明質感與字體層次)
     # ==========================================
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     tpe_now = now_utc.astimezone(pytz.timezone('Asia/Taipei'))
     us_now = now_utc.astimezone(pytz.timezone('US/Eastern'))
     
     version_html = textwrap.dedent(f"""
-    <div style="background-color:#0f172a; padding:12px; border-radius:8px; border:1px solid #1e293b; margin-top:10px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
-        <div style="font-size: 0.9rem; font-weight: 700; color: #60a5fa; margin-bottom: 5px;">🗂️ 系統當前版本</div>
-        <div style="color:#f8fafc; font-size:1rem; font-weight:700; margin-bottom:12px;">{APP_VERSION}</div>
-        <div style="font-size: 0.9rem; font-weight: 700; color: #60a5fa; margin-bottom: 5px;">🕒 最後資料更新</div>
-        <div style="color:#f1f5f9; font-size:0.85rem; font-weight:600; margin-bottom:4px;">Tw {tpe_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
-        <div style="color:#f1f5f9; font-size:0.85rem; font-weight:600;">Us {us_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
+    <div style="background-color: transparent; padding: 14px 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.1); margin-top: 15px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
+        <div style="font-size: 0.85rem; font-weight: 600; color: #9ca3af; margin-bottom: 4px;">系統當前版本</div>
+        <div style="color: #38bdf8; font-size: 1.05rem; font-weight: 700; margin-bottom: 12px; letter-spacing: 0.5px;">{APP_VERSION.replace('QBS', 'MON')}</div>
+        <div style="font-size: 0.85rem; font-weight: 600; color: #9ca3af; margin-bottom: 6px;">🕒 最後資料更新</div>
+        <div style="color: #f1f5f9; font-size: 0.82rem; font-weight: 600; margin-bottom: 3px;">Tw {tpe_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
+        <div style="color: #f1f5f9; font-size: 0.82rem; font-weight: 600;">Us {us_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
     </div>
     """).strip()
     
