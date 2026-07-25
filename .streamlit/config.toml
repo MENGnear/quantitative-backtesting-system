@@ -2,24 +2,27 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : .streamlit/config.toml
-# 程式版本 : config_v1.0.0 (MON 原版全域視覺設定)
+# 程式版本 : config_v1.0.1 (MON 全域視覺設定更新)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [還原設定] 完全套用 MON 原版的全域深色主題與側邊欄色彩設定，確保 UI 渲染一致性。
+#   1. [全域設定] 寫入 MON 原版深色配置，確立底層與側邊欄基礎色碼。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ Theme (全域主題色彩與字體)
-#   - 2️⃣ Server (伺服器靜態資源設定)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 [theme]
-base="dark"
-primaryColor="#3b82f6"
-backgroundColor="#0e1117"
-secondaryBackgroundColor="#171a23"
-textColor="#f1f5f9"
-font="sans serif"
+# i. 功能區 (主畫面) 深色底
+backgroundColor = "#0e1117"
 
-[server]
-enableStaticServing = false
+# ii. 控制項 (側邊欄) 深色底
+secondaryBackgroundColor = "#171a23"
+
+# 全局字體顏色 (淺色)
+textColor = "#f1f5f9"
+
+# 全局主要顏色 (按鈕、亮點)
+primaryColor = "#3b82f6"
+
+font = "sans serif"
