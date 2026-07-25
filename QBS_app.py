@@ -2,12 +2,11 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.11.0 (Phase 6: 版本區塊原生容器對齊版)
+# 程式版本 : QBS_v4.12.0 (Phase 6: 嚴格對齊 MON 原生卡片視覺)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [底色修復] 捨棄 HTML 寫死的背景與邊框，改用 Streamlit 原生的 st.container(border=True) 進行包裝，完美還原 MON 的深色一體成型質感。
-#   2. [連動修復] 拔除不必要的字串替換語法，讓畫面的 {APP_VERSION} 100% 忠實反應變數設定，恢復同步更新功能。
-#   3. [功能保留] 完整繼承 V4.9.0 的動態字典記憶、頁面 A/B 同步連動、生命週期防護與快取動態清除。
+#   1. [視覺重構] 停止依賴原生容器。將版本區塊退回 HTML 硬刻寫法，精準對齊 MON 截圖：深藍灰底色 (#0f172a)、灰色次標題 (#9ca3af) 與亮藍色主版號 (#38bdf8)。
+#   2. [功能保留] 完整繼承動態字典記憶、頁面 A/B 同步連動、生命週期防護與快取動態清除，無任何邏輯更動。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
@@ -15,7 +14,7 @@
 #   - 3️⃣ UX 連動回呼函式與信號燈初始化 
 #   - 4️⃣ 系統全域常數與共用 UI 渲染 
 #   - 5️⃣ 側邊欄控制面板 
-#   - 6️⃣ 主畫面戰情室與原生版本區塊 (🔥 V4.11.0 原生容器與同步修復)
+#   - 6️⃣ 戰情室與 MON 風格版本卡片 (🔥 V4.12.0 精準 HTML 視覺還原)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -50,7 +49,7 @@ def load_css(file_path):
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 load_css(os.path.join("assets", "style.css"))
 
-APP_VERSION = "QBS_V4.11.0"
+APP_VERSION = "QBS_V4.12.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 DICT_PATH = os.path.join(BASE_DIR, "config", "stock_dict.json")
@@ -361,23 +360,23 @@ with st.sidebar:
             if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
 
     # ==========================================
-    # 🌟 版本控制塊 (🔥 V4.11.0 改用原生容器，還原同步連動)
+    # 🌟 版本控制塊 (🔥 V4.12.0 完美還原 MON 視覺與底色)
     # ==========================================
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     tpe_now = now_utc.astimezone(pytz.timezone('Asia/Taipei'))
     us_now = now_utc.astimezone(pytz.timezone('US/Eastern'))
     
-    with st.container(border=True):
-        version_html = textwrap.dedent(f"""
-        <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 5px 0;">
-            <div style="font-size: 0.85rem; font-weight: 600; color: #9ca3af; margin-bottom: 4px;">系統當前版本</div>
-            <div style="color: #38bdf8; font-size: 1.1rem; font-weight: 700; margin-bottom: 12px; letter-spacing: 0.5px;">{APP_VERSION}</div>
-            <div style="font-size: 0.85rem; font-weight: 600; color: #9ca3af; margin-bottom: 6px;">🕒 最後資料更新</div>
-            <div style="color: #f1f5f9; font-size: 0.82rem; font-weight: 600; margin-bottom: 3px;">Tw {tpe_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
-            <div style="color: #f1f5f9; font-size: 0.82rem; font-weight: 600;">Us {us_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
-        </div>
-        """).strip()
-        st.markdown(version_html, unsafe_allow_html=True)
+    version_html = textwrap.dedent(f"""
+    <div style="background-color: #0f172a; padding: 15px; border-radius: 8px; border: 1px solid #1e293b; margin-top: 15px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
+        <div style="font-size: 0.9rem; font-weight: 600; color: #9ca3af; margin-bottom: 5px;">系統當前版本</div>
+        <div style="color: #38bdf8; font-size: 1.15rem; font-weight: 700; margin-bottom: 12px; letter-spacing: 0.5px;">{APP_VERSION}</div>
+        <div style="font-size: 0.9rem; font-weight: 600; color: #9ca3af; margin-bottom: 5px;">🕒 最後資料更新</div>
+        <div style="color: #f1f5f9; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px;">Tw {tpe_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
+        <div style="color: #f1f5f9; font-size: 0.85rem; font-weight: 600;">Us {us_now.strftime("%H:%M:%S %m/%d/%Y")}</div>
+    </div>
+    """).strip()
+    
+    st.markdown(version_html, unsafe_allow_html=True)
 
 # ==========================================================
 # 6️⃣ 主畫面戰情室
