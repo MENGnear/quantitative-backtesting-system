@@ -2,11 +2,11 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.12.0 (Phase 6: 嚴格對齊 MON 原生卡片視覺)
+# 程式版本 : QBS_v4.13.0 (Phase 6: 版本區塊底色微調)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [視覺重構] 停止依賴原生容器。將版本區塊退回 HTML 硬刻寫法，精準對齊 MON 截圖：深藍灰底色 (#0f172a)、灰色次標題 (#9ca3af) 與亮藍色主版號 (#38bdf8)。
-#   2. [功能保留] 完整繼承動態字典記憶、頁面 A/B 同步連動、生命週期防護與快取動態清除，無任何邏輯更動。
+#   1. [視覺優化] 將版本區塊的背景色調淺至 #1e293b，使其在 config.toml 定義的側邊欄 (#171a23) 上呈現正確的淺色卡片層次感。
+#   2. [功能保留] 完整繼承動態字典記憶、頁面 A/B 同步連動、生命週期防護與快取動態清除。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
@@ -14,7 +14,7 @@
 #   - 3️⃣ UX 連動回呼函式與信號燈初始化 
 #   - 4️⃣ 系統全域常數與共用 UI 渲染 
 #   - 5️⃣ 側邊欄控制面板 
-#   - 6️⃣ 戰情室與 MON 風格版本卡片 (🔥 V4.12.0 精準 HTML 視覺還原)
+#   - 6️⃣ 戰情室與淺色版本卡片 (🔥 V4.13.0 視覺層次修正)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -49,7 +49,7 @@ def load_css(file_path):
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 load_css(os.path.join("assets", "style.css"))
 
-APP_VERSION = "QBS_V4.12.0"
+APP_VERSION = "QBS_V4.13.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 DICT_PATH = os.path.join(BASE_DIR, "config", "stock_dict.json")
@@ -360,14 +360,14 @@ with st.sidebar:
             if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
 
     # ==========================================
-    # 🌟 版本控制塊 (🔥 V4.12.0 完美還原 MON 視覺與底色)
+    # 🌟 版本控制塊 (🔥 V4.13.0 背景色調淺至 #1e293b 呈現卡片感)
     # ==========================================
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     tpe_now = now_utc.astimezone(pytz.timezone('Asia/Taipei'))
     us_now = now_utc.astimezone(pytz.timezone('US/Eastern'))
     
     version_html = textwrap.dedent(f"""
-    <div style="background-color: #0f172a; padding: 15px; border-radius: 8px; border: 1px solid #1e293b; margin-top: 15px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
+    <div style="background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; margin-top: 15px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
         <div style="font-size: 0.9rem; font-weight: 600; color: #9ca3af; margin-bottom: 5px;">系統當前版本</div>
         <div style="color: #38bdf8; font-size: 1.15rem; font-weight: 700; margin-bottom: 12px; letter-spacing: 0.5px;">{APP_VERSION}</div>
         <div style="font-size: 0.9rem; font-weight: 600; color: #9ca3af; margin-bottom: 5px;">🕒 最後資料更新</div>
