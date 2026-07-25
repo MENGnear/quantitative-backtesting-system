@@ -2,17 +2,17 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.7.1 (Phase 6: Streamlit 生命週期報錯修復)
+# 程式版本 : QBS_v4.8.0 (Phase 6: 側邊欄視覺緊湊化)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [Bug 修復] 解決 StreamlitAPIException 報錯。將新增成功後的「直接清空元件值」改為「發送清空信號燈 (clear_input_flag)」，順應 Streamlit 底層渲染規則。
-#   2. [功能保留] 完整保留 V4.7.0 的防呆機制、互斥連動與市場脫鉤邏輯。
+#   1. [版面優化] 修正 sidebar_header 函式，拔除 margin-top，並導入 textwrap.dedent 消除 Markdown 引擎產生的隱形空白行。頁面 A 與 B 同步生效。
+#   2. [功能保留] 完整繼承 V4.7.1 的生命週期防護、防呆攔截與快取動態清除。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
-#   - 2️⃣ UX 連動回呼函式與信號燈初始化 (🔥 V4.7.1 新增信號燈)
-#   - 3️⃣ 系統全域常數與資料庫初始化
-#   - 4️⃣ 側邊欄控制面板 (🔥 V4.7.1 信號攔截與發送)
+#   - 2️⃣ UX 連動回呼函式與信號燈初始化
+#   - 3️⃣ 系統全域常數與共用 UI 渲染 (🔥 V4.8.0 標題空白行修復)
+#   - 4️⃣ 側邊欄控制面板 
 #   - 5️⃣ 主畫面戰情室
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -62,31 +62,31 @@ if "monitoring" not in st.session_state:
 # ==========================================================
 # 2️⃣ UX 連動回呼函式與信號燈初始化
 # ==========================================================
-# 初始化狀態變數
 if "sel_tw_val" not in st.session_state: st.session_state.sel_tw_val = "--- 請選擇 ---"
 if "sel_us_val" not in st.session_state: st.session_state.sel_us_val = "--- 請選擇 ---"
 if "manual_sym_val" not in st.session_state: st.session_state.manual_sym_val = ""
-# 🔥 V4.7.1 新增：用來通知系統清空輸入框的隱形信號燈
 if "clear_input_flag" not in st.session_state: st.session_state.clear_input_flag = False
 
-# 當操作下拉選單時，清空手動輸入
 def on_sel_change():
     st.session_state.manual_sym_val = ""
 
-# 當手動輸入時，重置所有下拉選單
 def on_manual_change():
     if st.session_state.manual_sym_val.strip() != "":
         st.session_state.sel_tw_val = "--- 請選擇 ---"
         st.session_state.sel_us_val = "--- 請選擇 ---"
 
-
+# ==========================================================
+# 3️⃣ 系統全域常數與共用 UI 渲染 (🔥 V4.8.0 標題空白行修復)
+# ==========================================================
 def sidebar_header(icon, title):
-    st.markdown(f"""
-        <div style="margin-top: 15px; margin-bottom: 12px;">
-            <span style="font-size: 1.05rem; font-weight: 700; color: #60a5fa; letter-spacing: 1px;">{icon} {title}</span>
-            <hr style="margin: 5px 0 0 0; border: 0; border-top: 1px dashed #475569;">
-        </div>
-    """, unsafe_allow_html=True)
+    # 🔥 關鍵修正：將 margin-top 歸零，並使用 dedent.strip() 防堵 Markdown 亂生換行，讓標題緊貼容器邊框
+    header_html = textwrap.dedent(f"""
+    <div style="margin-top: 0px; margin-bottom: 12px;">
+        <span style="font-size: 1.05rem; font-weight: 700; color: #60a5fa; letter-spacing: 1px;">{icon} {title}</span>
+        <hr style="margin: 5px 0 0 0; border: 0; border-top: 1px dashed #475569;">
+    </div>
+    """).strip()
+    st.markdown(header_html, unsafe_allow_html=True)
 
 test_display_map = {"2330.TW": "2330 台積電", "2454.TW": "2454 聯發科", "AAPL": "AAPL", "NVDA": "NVDA"}
 
@@ -136,7 +136,6 @@ with st.sidebar:
             else:
                 selected_db = st.selectbox("us 資料庫選取", ["--- 請選擇 ---", "AAPL", "NVDA"], format_func=lambda x: test_display_map.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_val", on_change=on_sel_change)
                 
-            # 🔥 V4.7.1 關鍵攔截：如果在上一輪新增成功並發送了信號，就在元件渲染前合法清空它
             if st.session_state.clear_input_flag:
                 st.session_state.manual_sym_val = ""
                 st.session_state.clear_input_flag = False
@@ -189,10 +188,7 @@ with st.sidebar:
                         if is_valid:
                             db_manager.add_monitor_item(target_sym, display_name=display_name, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
                             st.cache_data.clear()
-                            
-                            # 🔥 V4.7.1 發送清空信號燈：通知系統在下次載入時清空手動輸入框
                             st.session_state.clear_input_flag = True
-                            
                             st.success(f"✅ {display_name} ({target_sym}) 新增成功！")
                             st.rerun()
                         else:
