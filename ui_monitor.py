@@ -2,34 +2,34 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.9.1 (Phase 6.5: 移除主畫面推播測試呼叫，移交側邊欄)
+# 程式版本 : ui_v1.9.2 (Phase 6.5: 手動推播邏輯升級與時間分流)
 #
 # 📋 進版說明 (Version Notes):
 #   1. [快取解套] 將 tickers_tuple 導入 st.cache_data 裝飾器，確保每次新增股票時動態破除舊快取，秒速顯示新小卡。
 #   2. [顯示優化] 強化標題智慧去重邏輯，徹底根除「NVDA NVDA」等重複字眼。
-#   3. [架構修正] (v1.9.1) 移除主畫面底部的 render_telegram_manual_test_ui() 呼叫，僅保留區塊 4 函式定義，交由 QBS_app.py 側邊欄統一渲染。
+#   3. [功能升級] (v1.9.2) 導入 pytz，實作手動推播的「早/夜盤自動分流」與「空倉大盤/持倉個股」智慧判斷，並串接單行極簡字串組裝器。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 資料獲取與動態快取防護
 #   - 2️⃣ 介面渲染主程式
-#   - 3️⃣ 市場群組渲染器 (智慧去重與 Dedent 防護)
-#   - 4️⃣ 系統工具組與推播測試元件 (供外部呼叫)
+#   - 3️⃣ 市場群組渲染器 
+#   - 4️⃣ 系統工具組與推播測試元件 (🔥 邏輯大幅升級)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 import streamlit as st
 import pandas as pd
 import textwrap
+import pytz
 from datetime import datetime
 from core import engine_monitor
-from services.telegram_service import send_telegram_message
+from services.telegram_service import send_telegram_message, build_qbs_tg_msg
 
 # ==========================================================
 # 1️⃣ 資料獲取與動態快取防護
 # ==========================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def get_cached_radar_data(tickers_tuple):
-    """🔥 導入 tickers_tuple 參數，確保代碼改變時立刻作廢舊快取，解決新增卡死"""
     quotes, alerts = engine_monitor.run_radar_scan()
     indices = engine_monitor.fetch_realtime_quotes(['^TWII', '^IXIC'])
     quotes.update(indices)
@@ -46,7 +46,6 @@ def render_radar_dashboard():
         st.info("💡 實戰彈藥庫目前為空，請先從左側「新增即時監控」寫入標的。")
         return
 
-    # 取得當前清單的 tuple 傳入快取中
     current_tickers = tuple(targets_df['ticker'].tolist())
 
     with st.spinner("📡 正在擷取即時報價與掃描防線..."):
@@ -111,7 +110,6 @@ def render_market_group(market_type, targets_df, quotes, alerts):
         clean_ticker = ticker.replace('.TW', '')
         clean_name = str(row['display_name']).strip()
 
-        # 🔥 嚴格智慧去重邏輯：杜絕 "NVDA NVDA" 或 "2330.TW 2330 台積電"
         if not clean_name or clean_name == ticker or clean_name == clean_ticker:
             display_title = clean_ticker
         elif clean_name.startswith(clean_ticker):
@@ -184,31 +182,66 @@ def render_market_group(market_type, targets_df, quotes, alerts):
     st.markdown(cards_html, unsafe_allow_html=True)
 
 # ==========================================================
-# 4️⃣ 系統工具組與推播測試元件 (供外部呼叫)
+# 4️⃣ 系統工具組與推播測試元件 (🔥 邏輯大幅升級)
 # ==========================================================
 def render_telegram_manual_test_ui():
     """
-    渲染手動測試 Telegram 推播的 UI 區塊。
-    獨立容器包裹，確保樣式對齊系統設計，提供互動式測試回饋。
+    實作手動推播的智慧判斷：
+    1. 自動識別台灣時間，決定空倉時推播台股(TW)或美股(US)。
+    2. 若有持倉小卡，則組裝全部小卡的報價一次性推播。
     """
     with st.container(border=True):
         st.markdown("### 🛠️ 手動測試推播")
         
         if st.button("發送目前小卡狀態", type="primary", use_container_width=True):
             with st.spinner("發送中，請稍候..."):
-                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # 1. 取得時間判定市場 (06:00~18:00 為台股時段)
+                now_tpe = datetime.now(pytz.timezone('Asia/Taipei'))
+                is_tw_time = 6 <= now_tpe.hour <= 18
                 
-                test_msg = (
-                    f"🟢 <b>[QBS 手動推播測試]</b>\n"
-                    f"系統狀態：監控雷達正常運行中\n"
-                    f"發送時間：{current_time}\n"
-                    f"-------------------------\n"
-                    f"<i>※ 此為系統 UI 手動觸發之測試訊息。</i>"
-                )
+                targets_df = engine_monitor.get_monitor_targets()
                 
-                success = send_telegram_message(test_msg)
-                
-                if success:
-                    st.success("✅ 推播成功！請檢查您的 Telegram 手機 APP。")
+                # 2. 空倉狀態 (無小卡)：發送大盤
+                if targets_df.empty:
+                    target_idx = "^TWII" if is_tw_time else "^IXIC"
+                    idx_name = "TW" if is_tw_time else "US"
+                    
+                    quotes = engine_monitor.fetch_realtime_quotes([target_idx])
+                    if target_idx in quotes:
+                        q = quotes[target_idx]
+                        msg = build_qbs_tg_msg(idx_name, q['current'], q['change_pct'], is_manual=True)
+                        success = send_telegram_message(msg)
+                        if success:
+                            st.success(f"✅ 已發送大盤報價 ({idx_name})")
+                        else:
+                            st.error("❌ 發送失敗，請檢查金鑰設定。")
+                    else:
+                        st.warning("⚠️ 無法獲取大盤報價。")
+                        
+                # 3. 持倉狀態 (有小卡)：將所有小卡組合成單一訊息防洗頻
                 else:
-                    st.error("❌ 推播失敗！請檢查環境變數 (Token/ID) 或網路連線。")
+                    current_tickers = tuple(targets_df['ticker'].tolist())
+                    quotes, _ = engine_monitor.run_radar_scan() # 獲取最新報價
+                    
+                    msg_lines = []
+                    for _, row in targets_df.iterrows():
+                        ticker = row['ticker']
+                        clean_name = str(row['display_name']).strip()
+                        if not clean_name or clean_name == ticker:
+                            clean_name = ticker.replace(".TW", "")
+                            
+                        if ticker in quotes:
+                            q = quotes[ticker]
+                            line = build_qbs_tg_msg(clean_name, q['current'], q['change_pct'], is_manual=True)
+                            msg_lines.append(line)
+                    
+                    if msg_lines:
+                        # 將所有小卡的單行訊息用換行符號串接成一則大訊息發送
+                        final_msg = "\n".join(msg_lines)
+                        success = send_telegram_message(final_msg)
+                        if success:
+                            st.success(f"✅ 已發送 {len(msg_lines)} 檔監控標的狀態！")
+                        else:
+                            st.error("❌ 發送失敗，請檢查金鑰設定。")
+                    else:
+                        st.warning("⚠️ 獲取報價中，請稍後再試。")
