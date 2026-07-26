@@ -2,17 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.2.0 (Phase 5: 台美股獨立報價引擎)
+# 程式版本 : monitor_v1.3.0 (Phase 6.5: Telegram 自動推播與五分鐘防洗頻機制)
 #
 # 📋 進版說明 (Version Notes):
 #   1. [核心重構] 徹底分離台股與美股的 yf.download 請求，防止時差與休市導致的 NaN 空值互相干擾，修復美股無法讀取問題。
-#   2. [效能維持] 依舊保持批次下載優勢。
+#   2. [推播升級] (v1.3.0) 串接 telegram_service，實作自動推播單行極簡格式。
+#   3. [防洗機制] (v1.3.0) 導入 5 分鐘 (個股) 與 15 分鐘 (大盤) 的區間鎖定 Bucket 演算法，徹底根除洗頻問題。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 基礎環境與冷卻記憶體初始化
+#   - 1️⃣ 基礎環境與冷卻記憶體初始化 (🔥 升級 Bucket 記憶體)
 #   - 2️⃣ 高頻報價與資料解析模組 (分流機制)
-#   - 3️⃣ 警報觸發與冷卻邏輯
-#   - 4️⃣ 引擎主程序
+#   - 3️⃣ 警報觸發與冷卻邏輯 (🔥 導入 MON 觸發條件與 5 分鐘防護)
+#   - 4️⃣ 引擎主程序 (🔥 導入 15 分鐘大盤輪播)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -20,8 +21,10 @@ import sqlite3
 import pandas as pd
 import yfinance as yf
 import datetime
+import pytz
 import os
 import logging
+from services.telegram_service import send_telegram_message, build_qbs_tg_msg
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -31,7 +34,7 @@ DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 # ==========================================================
 # 1️⃣ 基礎環境與冷卻記憶體初始化
 # ==========================================================
-COOLDOWN_SECONDS = 900 
+# 儲存 Bucket ID，例如 {'2330.TW': '20260726_10_05', 'INDEX': '20260726_10_15'}
 _ALERT_HISTORY = {}
 
 def get_monitor_targets():
@@ -105,52 +108,90 @@ def parse_custom_values(val_str):
         return []
 
 # ==========================================================
-# 3️⃣ 警報觸發與冷卻邏輯
+# 3️⃣ 警報觸發與冷卻邏輯 (🔥 導入 MON 邏輯與 5 分鐘 Bucket)
 # ==========================================================
-def check_cooldown(alert_key):
-    now = datetime.datetime.now().timestamp()
-    last_trigger = _ALERT_HISTORY.get(alert_key, 0)
-    if (now - last_trigger) > COOLDOWN_SECONDS:
-        _ALERT_HISTORY[alert_key] = now
-        return True
-    return False
-
-def evaluate_alerts(row, quote):
+def evaluate_alerts(row, quote, tz_now):
     ticker = row['ticker']
     current_price = quote['current']
     change_pct = quote['change_pct']
+    
+    # 萃取乾淨名稱用於推播
+    clean_name = str(row['display_name']).strip()
+    if not clean_name or clean_name == ticker:
+        clean_name = ticker.replace('.TW', '')
     
     alerts = []
     thresholds = parse_custom_values(row['thresholds'])
     entry_prices = parse_custom_values(row['entry_prices'])
     exit_prices = parse_custom_values(row['exit_prices'])
 
+    is_triggered = False
+    trigger_reasons = []
+
+    # 1. 檢查門檻 (漲跌幅絕對值)
     for th in thresholds:
         if abs(change_pct) >= th:
-            direction = "📈 暴漲" if change_pct > 0 else "📉 暴跌"
-            alert_key = f"{ticker}_TH_{th}_{direction}"
-            if check_cooldown(alert_key):
-                alerts.append({'ticker': ticker, 'type': f'波動提醒', 'message': f"今日漲跌幅達 {change_pct}% (達標 {th}%)"})
+            is_triggered = True
+            trigger_reasons.append(f"達標 {th}%")
+            break
 
+    # 2. 檢查進場 (現價 >= 設定值)
     for entry in entry_prices:
-        if current_price <= entry:
-            alert_key = f"{ticker}_ENTRY_{entry}"
-            if check_cooldown(alert_key):
-                alerts.append({'ticker': ticker, 'type': '🎯 進場', 'message': f"現價達進場設定 ${entry}"})
+        if current_price >= entry:
+            is_triggered = True
+            trigger_reasons.append(f"進場達標")
+            break
 
+    # 3. 檢查出場 (現價 <= 設定值)
     for exit_p in exit_prices:
-        if current_price >= exit_p:
-            alert_key = f"{ticker}_EXIT_{exit_p}"
-            if check_cooldown(alert_key):
-                alerts.append({'ticker': ticker, 'type': '💰 出場', 'message': f"現價達出場設定 ${exit_p}"})
+        if current_price <= exit_p:
+            is_triggered = True
+            trigger_reasons.append(f"出場達標")
+            break
+
+    if is_triggered:
+        # 紀錄 UI 顯示用的警報
+        reason_str = "及".join(trigger_reasons)
+        alerts.append({'ticker': ticker, 'type': '🚨 觸發', 'message': f"{reason_str} (${current_price})"})
+        
+        # 5 分鐘區間防洗頻鎖定 (Bucket Lock)
+        # 格式範例: 20260726_10_05
+        current_interval_id = f"{tz_now.strftime('%Y%m%d_%H')}_{(tz_now.minute // 5) * 5:02d}"
+        
+        if _ALERT_HISTORY.get(ticker) != current_interval_id:
+            # 發送單行極簡 Telegram
+            msg = build_qbs_tg_msg(clean_name, current_price, change_pct, is_manual=False)
+            send_telegram_message(msg)
+            # 鎖定該 5 分鐘區間
+            _ALERT_HISTORY[ticker] = current_interval_id
 
     return alerts
 
 # ==========================================================
-# 4️⃣ 引擎主程序
+# 4️⃣ 引擎主程序 (🔥 導入大盤 15 分鐘輪播)
 # ==========================================================
 def run_radar_scan():
     targets_df = get_monitor_targets()
+    tz_now = datetime.datetime.now(pytz.timezone('Asia/Taipei'))
+    
+    # --- A. 大盤 15 分鐘固定推播機制 ---
+    is_tw_time = 6 <= tz_now.hour <= 18
+    target_idx = '^TWII' if is_tw_time else '^IXIC'
+    idx_name = "TW" if is_tw_time else "US"
+    
+    # 15 分鐘區間防洗頻鎖定 (Bucket Lock)
+    # 格式範例: IDX_20260726_10_15
+    idx_interval_id = f"IDX_{tz_now.strftime('%Y%m%d_%H')}_{(tz_now.minute // 15) * 15:02d}"
+    
+    if _ALERT_HISTORY.get('INDEX') != idx_interval_id:
+        idx_quotes = fetch_realtime_quotes([target_idx])
+        if target_idx in idx_quotes:
+            q = idx_quotes[target_idx]
+            msg = build_qbs_tg_msg(idx_name, q['current'], q['change_pct'], is_manual=False)
+            send_telegram_message(msg)
+            _ALERT_HISTORY['INDEX'] = idx_interval_id
+            
+    # --- B. 個股雷達掃描與自動警報 ---
     if targets_df.empty:
         return {}, []
 
@@ -160,7 +201,7 @@ def run_radar_scan():
     all_triggered_alerts = []
     for _, row in targets_df.iterrows():
         if row['ticker'] in quotes:
-            triggered = evaluate_alerts(row, quotes[row['ticker']])
+            triggered = evaluate_alerts(row, quotes[row['ticker']], tz_now)
             all_triggered_alerts.extend(triggered)
             
     return quotes, all_triggered_alerts
