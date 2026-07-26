@@ -2,19 +2,19 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.13.0 (Phase 6: 版本區塊底色微調)
+# 程式版本 : QBS_v4.14.0 (Phase 6.5: 側邊欄整合 Telegram 手動測試)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [視覺優化] 將版本區塊的背景色調淺至 #1e293b，使其在 config.toml 定義的側邊欄 (#171a23) 上呈現正確的淺色卡片層次感。
-#   2. [功能保留] 完整繼承動態字典記憶、頁面 A/B 同步連動、生命週期防護與快取動態清除。
+#   1. [功能新增] 於側邊欄最下方（版本區塊上方）呼叫 ui_monitor.render_telegram_manual_test_ui()。
+#   2. [視覺優化] 完全繼承 V4.13.0 的所有配置與排版，確保不影響既有功能與淺色卡片層次感。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態字典管理 
 #   - 3️⃣ UX 連動回呼函式與信號燈初始化 
 #   - 4️⃣ 系統全域常數與共用 UI 渲染 
-#   - 5️⃣ 側邊欄控制面板 
-#   - 6️⃣ 戰情室與淺色版本卡片 (🔥 V4.13.0 視覺層次修正)
+#   - 5️⃣ 側邊欄控制面板 (🔥 新增手動推播測試卡片)
+#   - 6️⃣ 戰情室與淺色版本卡片
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -49,7 +49,7 @@ def load_css(file_path):
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 load_css(os.path.join("assets", "style.css"))
 
-APP_VERSION = "QBS_V4.13.0"
+APP_VERSION = "QBS_V4.14.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 DICT_PATH = os.path.join(BASE_DIR, "config", "stock_dict.json")
@@ -358,6 +358,11 @@ with st.sidebar:
             sidebar_header("⏱️", "系統運行狀態")
             refresh_sec = st.slider("刷新頻率(秒)", 5, 60, 30, key="refresh_b")
             if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
+
+    # ==========================================
+    # 🛠️ 手動測試推播元件 (🔥 Phase 6.5 新增，置於版本塊上方)
+    # ==========================================
+    ui_monitor.render_telegram_manual_test_ui()
 
     # ==========================================
     # 🌟 版本控制塊 (🔥 V4.13.0 背景色調淺至 #1e293b 呈現卡片感)
