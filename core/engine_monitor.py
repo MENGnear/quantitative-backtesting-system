@@ -1,203 +1,247 @@
 # ==========================================================
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
-# 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.3.1 (Phase 6.5: 自動推播獨立事件確保)
+# 檔案名稱 : ui_monitor.py
+# 程式版本 : ui_v1.9.4 (Phase 6.5: 手動推播時區隔離過濾)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [核心重構] 徹底分離台股與美股的 yf.download 請求，防止時差與休市導致的 NaN 空值互相干擾，修復美股無法讀取問題。
-#   2. [推播升級] 串接 telegram_service，實作自動推播單行極簡格式。
-#   3. [防洗機制] (v1.3.1) 確認邏輯：大盤 15m 與 個股 5m 皆為獨立觸發事件，互不干擾，符合不洗頻原則。
+#   1. [快取解套] 將 tickers_tuple 導入 st.cache_data 裝飾器，確保每次新增股票時動態破除舊快取，秒速顯示新小卡。
+#   2. [顯示優化] 強化標題智慧去重邏輯，徹底根除「NVDA NVDA」等重複字眼。
+#   3. [功能升級] (v1.9.4) 手動推播加入「時區隔離過濾」，確保台股時間只推台股，美股時間只推美股，維持版面極簡。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 基礎環境與冷卻記憶體初始化
-#   - 2️⃣ 高頻報價與資料解析模組 (分流機制)
-#   - 3️⃣ 警報觸發與冷卻邏輯 
-#   - 4️⃣ 引擎主程序 
+#   - 1️⃣ 資料獲取與動態快取防護
+#   - 2️⃣ 介面渲染主程式
+#   - 3️⃣ 市場群組渲染器 
+#   - 4️⃣ 系統工具組與推播測試元件 (🔥 時區過濾閘門)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
-import sqlite3
+import streamlit as st
 import pandas as pd
-import yfinance as yf
-import datetime
+import textwrap
 import pytz
-import os
-import logging
+from datetime import datetime
+from core import engine_monitor
 from services.telegram_service import send_telegram_message, build_qbs_tg_msg
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
-
 # ==========================================================
-# 1️⃣ 基礎環境與冷卻記憶體初始化
+# 1️⃣ 資料獲取與動態快取防護
 # ==========================================================
-# 儲存 Bucket ID，例如 {'2330.TW': '20260726_10_05', 'INDEX': '20260726_10_15'}
-_ALERT_HISTORY = {}
-
-def get_monitor_targets():
-    if not os.path.exists(DB_PATH):
-        return pd.DataFrame()
-    with sqlite3.connect(DB_PATH) as conn:
-        return pd.read_sql_query("SELECT * FROM monitor_pool", conn)
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_radar_data(tickers_tuple):
+    quotes, alerts = engine_monitor.run_radar_scan()
+    indices = engine_monitor.fetch_realtime_quotes(['^TWII', '^IXIC'])
+    quotes.update(indices)
+    return quotes, alerts
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組 (分流機制)
+# 2️⃣ 介面渲染主程式
 # ==========================================================
-def fetch_realtime_quotes(tickers):
-    """分離台美股下載，防止 Pandas 互相干擾導致 NaN 誤刪"""
-    quotes = {}
-    if not tickers:
-        return quotes
-        
-    tw_tickers = [t for t in tickers if '.TW' in t or t == '^TWII']
-    us_tickers = [t for t in tickers if '.TW' not in t and t != '^TWII']
+def render_radar_dashboard():
+    st.markdown("### 📡 實戰雷達監測 (Execution Battlefield)")
     
-    def process_download(group_tickers):
-        if not group_tickers: return
-        try:
-            data = yf.download(group_tickers, period="5d", progress=False, threads=True)
-            if data.empty: return
-            is_multi = isinstance(data.columns, pd.MultiIndex)
-            
-            for ticker in group_tickers:
-                try:
-                    if is_multi:
-                        if 'Close' in data and ticker in data['Close']:
-                            close_series = data['Close'][ticker].dropna()
-                            open_series = data['Open'][ticker].dropna()
-                        else: continue
-                    else:
-                        close_series = data['Close'].dropna()
-                        open_series = data['Open'].dropna()
-
-                    if len(close_series) >= 2:
-                        curr = float(close_series.iloc[-1])
-                        prev = float(close_series.iloc[-2])
-                        open_p = float(open_series.iloc[-1])
-                        
-                        change_amt = curr - prev
-                        change_pct = (change_amt / prev * 100) if prev > 0 else 0.0
-                        
-                        quotes[ticker] = {
-                            'current': round(curr, 2),
-                            'prev': round(prev, 2),
-                            'open': round(open_p, 2),
-                            'change_amt': round(change_amt, 2),
-                            'change_pct': round(change_pct, 2)
-                        }
-                except Exception as inner_e:
-                    pass
-        except Exception as e:
-            pass
-
-    # 分別執行，互不干擾
-    process_download(tw_tickers)
-    process_download(us_tickers)
-    
-    return quotes
-
-def parse_custom_values(val_str):
-    if not val_str or pd.isna(val_str):
-        return []
-    try:
-        return [float(x.strip()) for x in str(val_str).split(',') if x.strip()]
-    except Exception:
-        return []
-
-# ==========================================================
-# 3️⃣ 警報觸發與冷卻邏輯 (🔥 導入 5 分鐘獨立事件)
-# ==========================================================
-def evaluate_alerts(row, quote, tz_now):
-    ticker = row['ticker']
-    current_price = quote['current']
-    change_pct = quote['change_pct']
-    
-    # 萃取乾淨名稱用於推播
-    clean_name = str(row['display_name']).strip()
-    if not clean_name or clean_name == ticker:
-        clean_name = ticker.replace('.TW', '')
-    
-    alerts = []
-    thresholds = parse_custom_values(row['thresholds'])
-    entry_prices = parse_custom_values(row['entry_prices'])
-    exit_prices = parse_custom_values(row['exit_prices'])
-
-    is_triggered = False
-    trigger_reasons = []
-
-    # 1. 檢查門檻 (漲跌幅絕對值)
-    for th in thresholds:
-        if abs(change_pct) >= th:
-            is_triggered = True
-            trigger_reasons.append(f"達標 {th}%")
-            break
-
-    # 2. 檢查進場 (現價 >= 設定值)
-    for entry in entry_prices:
-        if current_price >= entry:
-            is_triggered = True
-            trigger_reasons.append(f"進場達標")
-            break
-
-    # 3. 檢查出場 (現價 <= 設定值)
-    for exit_p in exit_prices:
-        if current_price <= exit_p:
-            is_triggered = True
-            trigger_reasons.append(f"出場達標")
-            break
-
-    if is_triggered:
-        # 紀錄 UI 顯示用的警報
-        reason_str = "及".join(trigger_reasons)
-        alerts.append({'ticker': ticker, 'type': '🚨 觸發', 'message': f"{reason_str} (${current_price})"})
-        
-        # 5 分鐘區間防洗頻鎖定 (Bucket Lock) - 獨立事件發送
-        current_interval_id = f"{tz_now.strftime('%Y%m%d_%H')}_{(tz_now.minute // 5) * 5:02d}"
-        
-        if _ALERT_HISTORY.get(ticker) != current_interval_id:
-            msg = build_qbs_tg_msg(clean_name, current_price, change_pct, is_manual=False)
-            send_telegram_message(msg)
-            _ALERT_HISTORY[ticker] = current_interval_id
-
-    return alerts
-
-# ==========================================================
-# 4️⃣ 引擎主程序 (🔥 導入大盤 15 分鐘獨立事件)
-# ==========================================================
-def run_radar_scan():
-    targets_df = get_monitor_targets()
-    tz_now = datetime.datetime.now(pytz.timezone('Asia/Taipei'))
-    
-    # --- A. 大盤 15 分鐘固定推播機制 (獨立事件) ---
-    is_tw_time = 6 <= tz_now.hour <= 18
-    target_idx = '^TWII' if is_tw_time else '^IXIC'
-    idx_name = "TW" if is_tw_time else "US"
-    
-    # 15 分鐘區間防洗頻鎖定 (Bucket Lock)
-    idx_interval_id = f"IDX_{tz_now.strftime('%Y%m%d_%H')}_{(tz_now.minute // 15) * 15:02d}"
-    
-    if _ALERT_HISTORY.get('INDEX') != idx_interval_id:
-        idx_quotes = fetch_realtime_quotes([target_idx])
-        if target_idx in idx_quotes:
-            q = idx_quotes[target_idx]
-            msg = build_qbs_tg_msg(idx_name, q['current'], q['change_pct'], is_manual=False)
-            send_telegram_message(msg)
-            _ALERT_HISTORY['INDEX'] = idx_interval_id
-            
-    # --- B. 個股雷達掃描與自動警報 ---
+    targets_df = engine_monitor.get_monitor_targets()
     if targets_df.empty:
-        return {}, []
+        st.info("💡 實戰彈藥庫目前為空，請先從左側「新增即時監控」寫入標的。")
+        return
 
-    tickers = targets_df['ticker'].tolist()
-    quotes = fetch_realtime_quotes(tickers)
-    
-    all_triggered_alerts = []
-    for _, row in targets_df.iterrows():
-        if row['ticker'] in quotes:
-            triggered = evaluate_alerts(row, quotes[row['ticker']], tz_now)
-            all_triggered_alerts.extend(triggered)
+    current_tickers = tuple(targets_df['ticker'].tolist())
+
+    with st.spinner("📡 正在擷取即時報價與掃描防線..."):
+        quotes, alerts = get_cached_radar_data(current_tickers)
+
+    tw_targets = targets_df[targets_df['market'] == 'tw']
+    us_targets = targets_df[targets_df['market'] == 'us']
+
+    if not tw_targets.empty:
+        render_market_group("tw", tw_targets, quotes, alerts)
+        
+    if not us_targets.empty:
+        if not tw_targets.empty:
+            st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
+        render_market_group("us", us_targets, quotes, alerts)
+
+# ==========================================================
+# 3️⃣ 市場群組渲染器
+# ==========================================================
+def render_market_group(market_type, targets_df, quotes, alerts):
+    if market_type == "tw":
+        idx_ticker = "^TWII"
+        idx_name = "tw 台灣股市 (Taiwan Market)"
+        icon = "🔴"
+        bar_color = "#3b82f6"
+    else:
+        idx_ticker = "^IXIC"
+        idx_name = "us 美國股市 (Nasdaq)"
+        icon = "🟢"
+        bar_color = "#3b82f6"
+
+    idx_quote_html = ""
+    if idx_ticker in quotes:
+        q = quotes[idx_ticker]
+        curr = q['current']
+        chg_amt = q['change_amt']
+        chg_pct = q['change_pct']
+        
+        if market_type == "tw":
+            color = "#ef4444" if chg_amt > 0 else "#10b981"
+        else:
+            color = "#10b981" if chg_amt > 0 else "#ef4444"
             
-    return quotes, all_triggered_alerts
+        arrow = "↑" if chg_amt > 0 else "↓"
+        sign = "+" if chg_amt > 0 else ""
+        idx_quote_html = f"""<span style="color: #38bdf8; margin-left: 10px;">{curr:,.2f}</span> <span style="color: {color}; font-size: 1rem; margin-left: 8px;">{sign}{chg_amt:.2f} ({arrow}{abs(chg_pct):.2f}%)</span>"""
+                             
+    header_html = textwrap.dedent(f"""
+    <div style="display: flex; align-items: center; margin: 10px 0 20px 0;">
+        <div style="width: 4px; height: 22px; background-color: {bar_color}; margin-right: 12px;"></div>
+        <div style="font-size: 1.25rem; font-weight: 800; color: #f8fafc;">
+            {icon} {idx_name} {idx_quote_html}
+        </div>
+    </div>
+    """).strip()
+    st.markdown(header_html, unsafe_allow_html=True)
+
+    cards_html = "<div style='display: flex; flex-wrap: wrap; gap: 18px;'>"
+    
+    for _, row in targets_df.iterrows():
+        ticker = row['ticker']
+        clean_ticker = ticker.replace('.TW', '')
+        clean_name = str(row['display_name']).strip()
+
+        if not clean_name or clean_name == ticker or clean_name == clean_ticker:
+            display_title = clean_ticker
+        elif clean_name.startswith(clean_ticker):
+            display_title = clean_name
+        else:
+            display_title = f"{clean_ticker} {clean_name}"
+
+        if ticker in quotes:
+            q = quotes[ticker]
+            curr = q['current']
+            prev = q['prev']
+            open_p = q['open']
+            chg_amt = q['change_amt']
+            chg_pct = q['change_pct']
+            
+            is_tw = market_type == "tw"
+            
+            if chg_amt > 0:
+                sign = "+"
+                if is_tw: 
+                    bg_color = "#2b1819" ; border_color = "#5a262c" ; text_color = "#ef4444" 
+                else:     
+                    bg_color = "#18241d" ; border_color = "#1f4738" ; text_color = "#10b981"
+            elif chg_amt < 0:
+                sign = ""
+                if is_tw: 
+                    bg_color = "#18241d" ; border_color = "#1f4738" ; text_color = "#10b981"
+                else:     
+                    bg_color = "#2b1819" ; border_color = "#5a262c" ; text_color = "#ef4444"
+            else:
+                sign = ""
+                bg_color = "#1c191b" ; border_color = "#3d2a2e" ; text_color = "#cbd5e1"
+                
+            chg_str = f"{sign}{chg_amt:.2f} ({sign}{chg_pct:.2f}%)"
+            
+            badge_html = ""
+            ticker_alerts = [a for a in alerts if a['ticker'] == ticker]
+            if ticker_alerts:
+                badge_html = f"<div style='margin-top: 15px; background-color: {bg_color}; color: {text_color}; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 0.95rem; border: 1px solid {text_color}; box-shadow: inset 0 0 8px rgba(0,0,0,0.5);'>📈 觸發: {ticker_alerts[0]['message']}</div>"
+
+            th_raw = row['thresholds'] if pd.notna(row['thresholds']) and row['thresholds'] else "--"
+            en_raw = row['entry_prices'] if pd.notna(row['entry_prices']) and row['entry_prices'] else "--"
+            ex_raw = row['exit_prices'] if pd.notna(row['exit_prices']) and row['exit_prices'] else "--"
+
+            card_html = textwrap.dedent(f"""
+            <div style="width: 280px; min-width: 280px; background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
+            <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
+            <div style="font-size: 2.1rem; font-weight: 800; color: #38bdf8; margin-bottom: 16px;">${curr:.2f}</div>
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+            <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">昨收： <span style="color: #f8fafc; margin-left: 5px;">${prev:.2f}</span></div>
+            <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">開盤： <span style="color: #f8fafc; margin-left: 5px;">${open_p:.2f}</span></div>
+            <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">漲幅： <span style="color: {text_color}; margin-left: 5px;">{chg_str}</span></div>
+            </div>
+            <div style="border-top: 1px dashed #475569; padding-top: 12px; text-align: center; color: #64748b; font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">門檻: {th_raw}% | 進場: ${en_raw} | 出場: ${ex_raw}</div>
+            {badge_html}
+            </div>
+            """).strip()
+            
+            cards_html += card_html
+        else:
+            card_loading = textwrap.dedent(f"""
+            <div style="width: 280px; min-width: 280px; background-color: #1c191b; border: 1px solid #3d2a2e; border-radius: 8px; padding: 18px;">
+            <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
+            <div style="color: #64748b; font-size: 1rem; margin-top: 20px;">資料讀取中...</div>
+            </div>
+            """).strip()
+            cards_html += card_loading
+            
+    cards_html += "</div>"
+    st.markdown(cards_html, unsafe_allow_html=True)
+
+# ==========================================================
+# 4️⃣ 系統工具組與推播測試元件 (🔥 時區過濾閘門)
+# ==========================================================
+def render_telegram_manual_test_ui():
+    """
+    實作手動推播的智慧判斷 (V1.9.4 時區隔離升級)：
+    1. 強制第一行發送當下時區的大盤報價。
+    2. 依據時區過濾小卡 (台股時間只抓 .TW，美股時間剔除 .TW)。
+    3. 全系列字串組合後一次發送，並統一加上 🛠️手動 標籤。
+    """
+    with st.container(border=True):
+        st.markdown("### 🛠️ 手動測試推播")
+        
+        if st.button("發送目前小卡狀態", type="primary", use_container_width=True):
+            with st.spinner("發送中，請稍候..."):
+                now_tpe = datetime.now(pytz.timezone('Asia/Taipei'))
+                is_tw_time = 6 <= now_tpe.hour <= 18
+                
+                target_idx = "^TWII" if is_tw_time else "^IXIC"
+                idx_name = "TW" if is_tw_time else "US"
+                
+                msg_lines = []
+                
+                # 步驟 1: 永遠先擷取並組裝大盤資訊
+                idx_quotes = engine_monitor.fetch_realtime_quotes([target_idx])
+                if target_idx in idx_quotes:
+                    q = idx_quotes[target_idx]
+                    msg_lines.append(build_qbs_tg_msg(idx_name, q['current'], q['change_pct'], is_manual=True))
+                else:
+                    msg_lines.append(f"🎯{idx_name} | ⚠️大盤獲取失敗 | 🛠️手動")
+                
+                # 步驟 2: 檢查並透過「時區閘門」過濾小卡資訊
+                targets_df = engine_monitor.get_monitor_targets()
+                if not targets_df.empty:
+                    # 🌟 時區隔離過濾
+                    if is_tw_time:
+                        targets_df = targets_df[targets_df['ticker'].str.contains(r'\.TW', na=False, regex=True)]
+                    else:
+                        targets_df = targets_df[~targets_df['ticker'].str.contains(r'\.TW', na=False, regex=True)]
+                    
+                    if not targets_df.empty:
+                        # 只針對當前活躍市場的標的抓取報價，節省資源
+                        current_tickers = targets_df['ticker'].tolist()
+                        quotes = engine_monitor.fetch_realtime_quotes(current_tickers)
+                        
+                        for _, row in targets_df.iterrows():
+                            ticker = row['ticker']
+                            clean_name = str(row['display_name']).strip()
+                            if not clean_name or clean_name == ticker:
+                                clean_name = ticker.replace(".TW", "")
+                                
+                            if ticker in quotes:
+                                q = quotes[ticker]
+                                line = build_qbs_tg_msg(clean_name, q['current'], q['change_pct'], is_manual=True)
+                                msg_lines.append(line)
+                                
+                # 步驟 3: 將所有陣列元素用換行符號合併並發送
+                final_msg = "\n".join(msg_lines)
+                success = send_telegram_message(final_msg)
+                
+                if success:
+                    st.success("✅ 手動推播發送成功！")
+                else:
+                    st.error("❌ 發送失敗，請檢查金鑰設定或網路連線。")
