@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.14.0 (Phase 6.5: 側邊欄整合 Telegram 手動測試)
+# 程式版本 : QBS_v4.14.1 (Phase 6.5: 側邊欄縮排完美修正)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [功能新增] 於側邊欄最下方（版本區塊上方）呼叫 ui_monitor.render_telegram_manual_test_ui()。
-#   2. [視覺優化] 完全繼承 V4.13.0 的所有配置與排版，確保不影響既有功能與淺色卡片層次感。
+#   1. [排版修正] 嚴格將推播測試按鈕與版本控制塊縮排至 with st.sidebar: 作用域內。
+#   2. [功能保留] 完整維持所有字典記憶與頁面切換邏輯。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態字典管理 
 #   - 3️⃣ UX 連動回呼函式與信號燈初始化 
 #   - 4️⃣ 系統全域常數與共用 UI 渲染 
-#   - 5️⃣ 側邊欄控制面板 (🔥 新增手動推播測試卡片)
+#   - 5️⃣ 側邊欄控制面板 (🔥 推播卡片與版本塊已正確歸位)
 #   - 6️⃣ 戰情室與淺色版本卡片
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -49,7 +49,7 @@ def load_css(file_path):
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 load_css(os.path.join("assets", "style.css"))
 
-APP_VERSION = "QBS_V4.14.0"
+APP_VERSION = "QBS_V4.14.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 DICT_PATH = os.path.join(BASE_DIR, "config", "stock_dict.json")
@@ -360,12 +360,12 @@ with st.sidebar:
             if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
 
     # ==========================================
-    # 🛠️ 手動測試推播元件 (🔥 Phase 6.5 新增，置於版本塊上方)
+    # 🛠️ 手動測試推播元件 (🔥 Phase 6.5 修正：已縮排至側邊欄內)
     # ==========================================
     ui_monitor.render_telegram_manual_test_ui()
 
     # ==========================================
-    # 🌟 版本控制塊 (🔥 V4.13.0 背景色調淺至 #1e293b 呈現卡片感)
+    # 🌟 版本控制塊 (🔥 修正：已縮排至側邊欄內)
     # ==========================================
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     tpe_now = now_utc.astimezone(pytz.timezone('Asia/Taipei'))
