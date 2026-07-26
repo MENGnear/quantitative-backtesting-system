@@ -2,18 +2,15 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : telegram_service.py
-# 程式版本 : tg_v1.1.0 (Phase 6.5: 單行極簡推播與共用組裝器)
+# 程式版本 : tg_v1.1.1 (Phase 6.5: 移除冗餘 dotenv 套件)
 #
 # 📋 進版說明:
-#   1. [新增] 參照 MON 系統，新增 build_qbs_tg_msg 單行極簡字串組裝器。
-#   2. [修正] 嚴格落實無時間戳記之格式：🎯0050 | 📉$101.70 | -2.12%。
+#   1. [修正] 移除 dotenv 依賴，改完全依賴 Streamlit 內建的環境變數注入機制，解決雲端部署 ModuleNotFoundError 錯誤。
 # ==========================================================
 import os
 import requests
 import logging
-from dotenv import load_dotenv
 
-load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
