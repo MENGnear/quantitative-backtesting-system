@@ -2,19 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.9.1 (Phase 6.5: 修正 Telegram 手動推播測試至側邊欄)
+# 程式版本 : ui_v1.9.1 (Phase 6.5: 移除主畫面推播測試呼叫，移交側邊欄)
 #
 # 📋 進版說明 (Version Notes):
 #   1. [快取解套] 將 tickers_tuple 導入 st.cache_data 裝飾器，確保每次新增股票時動態破除舊快取，秒速顯示新小卡。
 #   2. [顯示優化] 強化標題智慧去重邏輯，徹底根除「NVDA NVDA」等重複字眼。
-#   3. [功能新增] (v1.9.0) 實作「手動測試推播」卡片，無縫對接 services.telegram_service。
-#   4. [UI 修正] (v1.9.1) 將手動測試卡片從主畫面底部移至側邊欄 (st.sidebar.container)，符合操作直覺。
+#   3. [架構修正] (v1.9.1) 移除主畫面底部的 render_telegram_manual_test_ui() 呼叫，僅保留區塊 4 函式定義，交由 QBS_app.py 側邊欄統一渲染。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 資料獲取與動態快取防護
 #   - 2️⃣ 介面渲染主程式
 #   - 3️⃣ 市場群組渲染器 (智慧去重與 Dedent 防護)
-#   - 4️⃣ 系統工具組與推播測試 (🔥 側邊欄專屬)
+#   - 4️⃣ 系統工具組與推播測試元件 (供外部呼叫)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -40,9 +39,6 @@ def get_cached_radar_data(tickers_tuple):
 # 2️⃣ 介面渲染主程式
 # ==========================================================
 def render_radar_dashboard():
-    # 🔥 優先渲染側邊欄的手動推播測試卡片
-    render_telegram_manual_test_ui()
-
     st.markdown("### 📡 實戰雷達監測 (Execution Battlefield)")
     
     targets_df = engine_monitor.get_monitor_targets()
@@ -188,14 +184,14 @@ def render_market_group(market_type, targets_df, quotes, alerts):
     st.markdown(cards_html, unsafe_allow_html=True)
 
 # ==========================================================
-# 4️⃣ 系統工具組與推播測試 (🔥 側邊欄專屬)
+# 4️⃣ 系統工具組與推播測試元件 (供外部呼叫)
 # ==========================================================
 def render_telegram_manual_test_ui():
     """
     渲染手動測試 Telegram 推播的 UI 區塊。
-    使用 st.sidebar.container 確保此元件固定於左側邊欄。
+    獨立容器包裹，確保樣式對齊系統設計，提供互動式測試回饋。
     """
-    with st.sidebar.container(border=True):
+    with st.container(border=True):
         st.markdown("### 🛠️ 手動測試推播")
         
         if st.button("發送目前小卡狀態", type="primary", use_container_width=True):
@@ -213,6 +209,6 @@ def render_telegram_manual_test_ui():
                 success = send_telegram_message(test_msg)
                 
                 if success:
-                    st.sidebar.success("✅ 推播成功！")
+                    st.success("✅ 推播成功！請檢查您的 Telegram 手機 APP。")
                 else:
-                    st.sidebar.error("❌ 推播失敗！")
+                    st.error("❌ 推播失敗！請檢查環境變數 (Token/ID) 或網路連線。")
