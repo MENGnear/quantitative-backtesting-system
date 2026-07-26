@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.3.0 (Phase 6.5: Telegram 自動推播與五分鐘防洗頻機制)
+# 程式版本 : monitor_v1.3.1 (Phase 6.5: 自動推播獨立事件確保)
 #
 # 📋 進版說明 (Version Notes):
 #   1. [核心重構] 徹底分離台股與美股的 yf.download 請求，防止時差與休市導致的 NaN 空值互相干擾，修復美股無法讀取問題。
-#   2. [推播升級] (v1.3.0) 串接 telegram_service，實作自動推播單行極簡格式。
-#   3. [防洗機制] (v1.3.0) 導入 5 分鐘 (個股) 與 15 分鐘 (大盤) 的區間鎖定 Bucket 演算法，徹底根除洗頻問題。
+#   2. [推播升級] 串接 telegram_service，實作自動推播單行極簡格式。
+#   3. [防洗機制] (v1.3.1) 確認邏輯：大盤 15m 與 個股 5m 皆為獨立觸發事件，互不干擾，符合不洗頻原則。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 基礎環境與冷卻記憶體初始化 (🔥 升級 Bucket 記憶體)
+#   - 1️⃣ 基礎環境與冷卻記憶體初始化
 #   - 2️⃣ 高頻報價與資料解析模組 (分流機制)
-#   - 3️⃣ 警報觸發與冷卻邏輯 (🔥 導入 MON 觸發條件與 5 分鐘防護)
-#   - 4️⃣ 引擎主程序 (🔥 導入 15 分鐘大盤輪播)
+#   - 3️⃣ 警報觸發與冷卻邏輯 
+#   - 4️⃣ 引擎主程序 
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -108,7 +108,7 @@ def parse_custom_values(val_str):
         return []
 
 # ==========================================================
-# 3️⃣ 警報觸發與冷卻邏輯 (🔥 導入 MON 邏輯與 5 分鐘 Bucket)
+# 3️⃣ 警報觸發與冷卻邏輯 (🔥 導入 5 分鐘獨立事件)
 # ==========================================================
 def evaluate_alerts(row, quote, tz_now):
     ticker = row['ticker']
@@ -154,33 +154,29 @@ def evaluate_alerts(row, quote, tz_now):
         reason_str = "及".join(trigger_reasons)
         alerts.append({'ticker': ticker, 'type': '🚨 觸發', 'message': f"{reason_str} (${current_price})"})
         
-        # 5 分鐘區間防洗頻鎖定 (Bucket Lock)
-        # 格式範例: 20260726_10_05
+        # 5 分鐘區間防洗頻鎖定 (Bucket Lock) - 獨立事件發送
         current_interval_id = f"{tz_now.strftime('%Y%m%d_%H')}_{(tz_now.minute // 5) * 5:02d}"
         
         if _ALERT_HISTORY.get(ticker) != current_interval_id:
-            # 發送單行極簡 Telegram
             msg = build_qbs_tg_msg(clean_name, current_price, change_pct, is_manual=False)
             send_telegram_message(msg)
-            # 鎖定該 5 分鐘區間
             _ALERT_HISTORY[ticker] = current_interval_id
 
     return alerts
 
 # ==========================================================
-# 4️⃣ 引擎主程序 (🔥 導入大盤 15 分鐘輪播)
+# 4️⃣ 引擎主程序 (🔥 導入大盤 15 分鐘獨立事件)
 # ==========================================================
 def run_radar_scan():
     targets_df = get_monitor_targets()
     tz_now = datetime.datetime.now(pytz.timezone('Asia/Taipei'))
     
-    # --- A. 大盤 15 分鐘固定推播機制 ---
+    # --- A. 大盤 15 分鐘固定推播機制 (獨立事件) ---
     is_tw_time = 6 <= tz_now.hour <= 18
     target_idx = '^TWII' if is_tw_time else '^IXIC'
     idx_name = "TW" if is_tw_time else "US"
     
     # 15 分鐘區間防洗頻鎖定 (Bucket Lock)
-    # 格式範例: IDX_20260726_10_15
     idx_interval_id = f"IDX_{tz_now.strftime('%Y%m%d_%H')}_{(tz_now.minute // 15) * 15:02d}"
     
     if _ALERT_HISTORY.get('INDEX') != idx_interval_id:
