@@ -2,23 +2,27 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.8.0 (Phase 5: 動態快取金鑰與智慧標題去重)
+# 程式版本 : ui_v1.9.0 (Phase 6.5: 實裝 Telegram 手動推播測試)
 #
 # 📋 進版說明 (Version Notes):
 #   1. [快取解套] 將 tickers_tuple 導入 st.cache_data 裝飾器，確保每次新增股票時動態破除舊快取，秒速顯示新小卡。
 #   2. [顯示優化] 強化標題智慧去重邏輯，徹底根除「NVDA NVDA」等重複字眼。
+#   3. [功能新增] (v1.9.0) 實作「手動測試推播」卡片，無縫對接 services.telegram_service，支援 UI 互動回饋。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 資料獲取與動態快取防護
 #   - 2️⃣ 介面渲染主程式
 #   - 3️⃣ 市場群組渲染器 (智慧去重與 Dedent 防護)
+#   - 4️⃣ 系統工具組與推播測試 (🔥 新增)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 import streamlit as st
 import pandas as pd
 import textwrap
+from datetime import datetime
 from core import engine_monitor
+from services.telegram_service import send_telegram_message
 
 # ==========================================================
 # 1️⃣ 資料獲取與動態快取防護
@@ -58,6 +62,10 @@ def render_radar_dashboard():
         if not tw_targets.empty:
             st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
         render_market_group("us", us_targets, quotes, alerts)
+
+    # 🔥 在監控卡片下方，加上 40px 的間距後渲染手動測試按鈕
+    st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
+    render_telegram_manual_test_ui()
 
 # ==========================================================
 # 3️⃣ 市場群組渲染器
@@ -178,3 +186,33 @@ def render_market_group(market_type, targets_df, quotes, alerts):
             
     cards_html += "</div>"
     st.markdown(cards_html, unsafe_allow_html=True)
+
+# ==========================================================
+# 4️⃣ 系統工具組與推播測試
+# ==========================================================
+def render_telegram_manual_test_ui():
+    """
+    渲染手動測試 Telegram 推播的 UI 區塊。
+    獨立容器包裹，確保樣式對齊系統設計，提供互動式測試回饋。
+    """
+    with st.container(border=True):
+        st.markdown("### 🛠️ 手動測試推播")
+        
+        if st.button("發送目前小卡狀態", type="primary", use_container_width=True):
+            with st.spinner("發送中，請稍候..."):
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                test_msg = (
+                    f"🟢 <b>[QBS 手動推播測試]</b>\n"
+                    f"系統狀態：監控雷達正常運行中\n"
+                    f"發送時間：{current_time}\n"
+                    f"-------------------------\n"
+                    f"<i>※ 此為系統 UI 手動觸發之測試訊息。</i>"
+                )
+                
+                success = send_telegram_message(test_msg)
+                
+                if success:
+                    st.success("✅ 推播成功！請檢查您的 Telegram 手機 APP。")
+                else:
+                    st.error("❌ 推播失敗！請檢查環境變數 (Token/ID) 或網路連線。")
