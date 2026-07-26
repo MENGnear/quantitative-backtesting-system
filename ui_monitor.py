@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.9.3 (Phase 6.5: 手動推播強制大盤置頂組合)
+# 程式版本 : ui_v1.9.4 (Phase 6.5: 手動推播時區隔離過濾)
 #
 # 📋 進版說明 (Version Notes):
 #   1. [快取解套] 將 tickers_tuple 導入 st.cache_data 裝飾器，確保每次新增股票時動態破除舊快取，秒速顯示新小卡。
 #   2. [顯示優化] 強化標題智慧去重邏輯，徹底根除「NVDA NVDA」等重複字眼。
-#   3. [功能升級] (v1.9.3) 修改手動推播邏輯：強制發送「純大盤」或「大盤+小股組合」，且每行皆附帶手動標籤。
+#   3. [功能升級] (v1.9.4) 手動推播加入「時區隔離過濾」，確保台股時間只推台股，美股時間只推美股，維持版面極簡。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 資料獲取與動態快取防護
 #   - 2️⃣ 介面渲染主程式
 #   - 3️⃣ 市場群組渲染器 
-#   - 4️⃣ 系統工具組與推播測試元件 (🔥 邏輯大幅升級)
+#   - 4️⃣ 系統工具組與推播測試元件 (🔥 時區過濾閘門)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -182,13 +182,13 @@ def render_market_group(market_type, targets_df, quotes, alerts):
     st.markdown(cards_html, unsafe_allow_html=True)
 
 # ==========================================================
-# 4️⃣ 系統工具組與推播測試元件 (🔥 邏輯大幅升級)
+# 4️⃣ 系統工具組與推播測試元件 (🔥 時區過濾閘門)
 # ==========================================================
 def render_telegram_manual_test_ui():
     """
-    實作手動推播的智慧判斷 (V1.9.3 升級)：
+    實作手動推播的智慧判斷 (V1.9.4 時區隔離升級)：
     1. 強制第一行發送當下時區的大盤報價。
-    2. 如果有小卡，依序接在大盤下方。
+    2. 依據時區過濾小卡 (台股時間只抓 .TW，美股時間剔除 .TW)。
     3. 全系列字串組合後一次發送，並統一加上 🛠️手動 標籤。
     """
     with st.container(border=True):
@@ -212,21 +212,31 @@ def render_telegram_manual_test_ui():
                 else:
                     msg_lines.append(f"🎯{idx_name} | ⚠️大盤獲取失敗 | 🛠️手動")
                 
-                # 步驟 2: 檢查並附加所有小卡資訊
+                # 步驟 2: 檢查並透過「時區閘門」過濾小卡資訊
                 targets_df = engine_monitor.get_monitor_targets()
                 if not targets_df.empty:
-                    quotes, _ = engine_monitor.run_radar_scan() # 獲取小卡最新報價
-                    for _, row in targets_df.iterrows():
-                        ticker = row['ticker']
-                        clean_name = str(row['display_name']).strip()
-                        if not clean_name or clean_name == ticker:
-                            clean_name = ticker.replace(".TW", "")
-                            
-                        if ticker in quotes:
-                            q = quotes[ticker]
-                            line = build_qbs_tg_msg(clean_name, q['current'], q['change_pct'], is_manual=True)
-                            msg_lines.append(line)
-                            
+                    # 🌟 時區隔離過濾
+                    if is_tw_time:
+                        targets_df = targets_df[targets_df['ticker'].str.contains(r'\.TW', na=False, regex=True)]
+                    else:
+                        targets_df = targets_df[~targets_df['ticker'].str.contains(r'\.TW', na=False, regex=True)]
+                    
+                    if not targets_df.empty:
+                        # 只針對當前活躍市場的標的抓取報價，節省資源
+                        current_tickers = targets_df['ticker'].tolist()
+                        quotes = engine_monitor.fetch_realtime_quotes(current_tickers)
+                        
+                        for _, row in targets_df.iterrows():
+                            ticker = row['ticker']
+                            clean_name = str(row['display_name']).strip()
+                            if not clean_name or clean_name == ticker:
+                                clean_name = ticker.replace(".TW", "")
+                                
+                            if ticker in quotes:
+                                q = quotes[ticker]
+                                line = build_qbs_tg_msg(clean_name, q['current'], q['change_pct'], is_manual=True)
+                                msg_lines.append(line)
+                                
                 # 步驟 3: 將所有陣列元素用換行符號合併並發送
                 final_msg = "\n".join(msg_lines)
                 success = send_telegram_message(final_msg)
