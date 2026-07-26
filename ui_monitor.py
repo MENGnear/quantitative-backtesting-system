@@ -2,12 +2,12 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.9.2 (Phase 6.5: 手動推播邏輯升級與時間分流)
+# 程式版本 : ui_v1.9.3 (Phase 6.5: 手動推播強制大盤置頂組合)
 #
 # 📋 進版說明 (Version Notes):
 #   1. [快取解套] 將 tickers_tuple 導入 st.cache_data 裝飾器，確保每次新增股票時動態破除舊快取，秒速顯示新小卡。
 #   2. [顯示優化] 強化標題智慧去重邏輯，徹底根除「NVDA NVDA」等重複字眼。
-#   3. [功能升級] (v1.9.2) 導入 pytz，實作手動推播的「早/夜盤自動分流」與「空倉大盤/持倉個股」智慧判斷，並串接單行極簡字串組裝器。
+#   3. [功能升級] (v1.9.3) 修改手動推播邏輯：強制發送「純大盤」或「大盤+小股組合」，且每行皆附帶手動標籤。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 資料獲取與動態快取防護
@@ -186,44 +186,36 @@ def render_market_group(market_type, targets_df, quotes, alerts):
 # ==========================================================
 def render_telegram_manual_test_ui():
     """
-    實作手動推播的智慧判斷：
-    1. 自動識別台灣時間，決定空倉時推播台股(TW)或美股(US)。
-    2. 若有持倉小卡，則組裝全部小卡的報價一次性推播。
+    實作手動推播的智慧判斷 (V1.9.3 升級)：
+    1. 強制第一行發送當下時區的大盤報價。
+    2. 如果有小卡，依序接在大盤下方。
+    3. 全系列字串組合後一次發送，並統一加上 🛠️手動 標籤。
     """
     with st.container(border=True):
         st.markdown("### 🛠️ 手動測試推播")
         
         if st.button("發送目前小卡狀態", type="primary", use_container_width=True):
             with st.spinner("發送中，請稍候..."):
-                # 1. 取得時間判定市場 (06:00~18:00 為台股時段)
                 now_tpe = datetime.now(pytz.timezone('Asia/Taipei'))
                 is_tw_time = 6 <= now_tpe.hour <= 18
                 
-                targets_df = engine_monitor.get_monitor_targets()
+                target_idx = "^TWII" if is_tw_time else "^IXIC"
+                idx_name = "TW" if is_tw_time else "US"
                 
-                # 2. 空倉狀態 (無小卡)：發送大盤
-                if targets_df.empty:
-                    target_idx = "^TWII" if is_tw_time else "^IXIC"
-                    idx_name = "TW" if is_tw_time else "US"
-                    
-                    quotes = engine_monitor.fetch_realtime_quotes([target_idx])
-                    if target_idx in quotes:
-                        q = quotes[target_idx]
-                        msg = build_qbs_tg_msg(idx_name, q['current'], q['change_pct'], is_manual=True)
-                        success = send_telegram_message(msg)
-                        if success:
-                            st.success(f"✅ 已發送大盤報價 ({idx_name})")
-                        else:
-                            st.error("❌ 發送失敗，請檢查金鑰設定。")
-                    else:
-                        st.warning("⚠️ 無法獲取大盤報價。")
-                        
-                # 3. 持倉狀態 (有小卡)：將所有小卡組合成單一訊息防洗頻
+                msg_lines = []
+                
+                # 步驟 1: 永遠先擷取並組裝大盤資訊
+                idx_quotes = engine_monitor.fetch_realtime_quotes([target_idx])
+                if target_idx in idx_quotes:
+                    q = idx_quotes[target_idx]
+                    msg_lines.append(build_qbs_tg_msg(idx_name, q['current'], q['change_pct'], is_manual=True))
                 else:
-                    current_tickers = tuple(targets_df['ticker'].tolist())
-                    quotes, _ = engine_monitor.run_radar_scan() # 獲取最新報價
-                    
-                    msg_lines = []
+                    msg_lines.append(f"🎯{idx_name} | ⚠️大盤獲取失敗 | 🛠️手動")
+                
+                # 步驟 2: 檢查並附加所有小卡資訊
+                targets_df = engine_monitor.get_monitor_targets()
+                if not targets_df.empty:
+                    quotes, _ = engine_monitor.run_radar_scan() # 獲取小卡最新報價
                     for _, row in targets_df.iterrows():
                         ticker = row['ticker']
                         clean_name = str(row['display_name']).strip()
@@ -234,14 +226,12 @@ def render_telegram_manual_test_ui():
                             q = quotes[ticker]
                             line = build_qbs_tg_msg(clean_name, q['current'], q['change_pct'], is_manual=True)
                             msg_lines.append(line)
-                    
-                    if msg_lines:
-                        # 將所有小卡的單行訊息用換行符號串接成一則大訊息發送
-                        final_msg = "\n".join(msg_lines)
-                        success = send_telegram_message(final_msg)
-                        if success:
-                            st.success(f"✅ 已發送 {len(msg_lines)} 檔監控標的狀態！")
-                        else:
-                            st.error("❌ 發送失敗，請檢查金鑰設定。")
-                    else:
-                        st.warning("⚠️ 獲取報價中，請稍後再試。")
+                            
+                # 步驟 3: 將所有陣列元素用換行符號合併並發送
+                final_msg = "\n".join(msg_lines)
+                success = send_telegram_message(final_msg)
+                
+                if success:
+                    st.success("✅ 手動推播發送成功！")
+                else:
+                    st.error("❌ 發送失敗，請檢查金鑰設定或網路連線。")
