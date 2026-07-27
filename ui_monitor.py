@@ -2,19 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.9.5 (Phase 6.5: 拆除快取封印與接通主開關)
+# 程式版本 : ui_v1.9.6 (Phase 6.5: 手動推播代碼極簡化)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [顯示優化] 強化標題智慧去重邏輯，徹底根除「NVDA NVDA」等重複字眼。
-#   2. [功能升級] 手動推播加入「時區隔離過濾」，確保台股時間只推台股，美股時間只推美股。
-#   3. [重大修復] (v1.9.5) 徹底移除 @st.cache_data 封印，確保背景警報能被真實觸發。
-#   4. [重大修復] (v1.9.5) 將 st.session_state.monitoring 狀態傳遞給引擎，實作物理開關。
+#   1. [功能升級] 手動推播加入「時區隔離過濾」，確保台股時間只推台股，美股時間只推美股。
+#   2. [重大修復] 徹底移除 @st.cache_data 封印，並將 st.session_state.monitoring 狀態傳遞給引擎。
+#   3. [顯示優化] (v1.9.6) UI 顯示與推播脫鉤，手動推播強制只顯示純代碼 (例: 00631L)，達成極簡視覺。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 資料獲取與動態快取防護 (🔥 移除快取)
-#   - 2️⃣ 介面渲染主程式 (🔥 導入狀態傳遞)
-#   - 3️⃣ 市場群組渲染器 
-#   - 4️⃣ 系統工具組與推播測試元件
+#   - 1️⃣ 資料獲取與動態快取防護
+#   - 2️⃣ 介面渲染主程式
+#   - 3️⃣ 市場群組渲染器 (UI 維持原樣，保留中文與完整資訊)
+#   - 4️⃣ 系統工具組與推播測試元件 (🔥 變更推播命名萃取邏輯)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -27,7 +26,7 @@ from core import engine_monitor
 from services.telegram_service import send_telegram_message, build_qbs_tg_msg
 
 # ==========================================================
-# 1️⃣ 資料獲取 (🔥 移除快取，確保警報真實觸發)
+# 1️⃣ 資料獲取
 # ==========================================================
 def get_realtime_radar_data(tickers_tuple, is_monitoring):
     quotes, alerts = engine_monitor.run_radar_scan(is_monitoring)
@@ -48,7 +47,6 @@ def render_radar_dashboard():
 
     current_tickers = tuple(targets_df['ticker'].tolist())
     
-    # 🌟 獲取全域監測狀態 (預設為 False)
     is_monitoring = st.session_state.get('monitoring', False)
 
     with st.spinner("📡 正在擷取即時報價與掃描防線..."):
@@ -207,7 +205,6 @@ def render_telegram_manual_test_ui():
                 
                 msg_lines = []
                 
-                # 步驟 1: 永遠先擷取並組裝大盤資訊
                 idx_quotes = engine_monitor.fetch_realtime_quotes([target_idx])
                 if target_idx in idx_quotes:
                     q = idx_quotes[target_idx]
@@ -215,7 +212,6 @@ def render_telegram_manual_test_ui():
                 else:
                     msg_lines.append(f"🎯{idx_name} | ⚠️大盤獲取失敗 | 🛠️手動")
                 
-                # 步驟 2: 檢查並透過「時區閘門」過濾小卡資訊
                 targets_df = engine_monitor.get_monitor_targets()
                 if not targets_df.empty:
                     if is_tw_time:
@@ -229,16 +225,14 @@ def render_telegram_manual_test_ui():
                         
                         for _, row in targets_df.iterrows():
                             ticker = row['ticker']
-                            clean_name = str(row['display_name']).strip()
-                            if not clean_name or clean_name == ticker:
-                                clean_name = ticker.replace(".TW", "")
+                            # 🔥 變更邏輯：強制過濾中文，只保留去尾綴純代碼給推播系統
+                            clean_name = ticker.replace(".TW", "")
                                 
                             if ticker in quotes:
                                 q = quotes[ticker]
                                 line = build_qbs_tg_msg(clean_name, q['current'], q['change_pct'], is_manual=True)
                                 msg_lines.append(line)
                                 
-                # 步驟 3: 將所有陣列元素用換行符號合併並發送
                 final_msg = "\n".join(msg_lines)
                 success = send_telegram_message(final_msg)
                 
