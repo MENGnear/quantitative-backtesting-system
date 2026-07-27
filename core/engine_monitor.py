@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.3.3 (Phase 6.5: 接收並執行主開關指令)
+# 程式版本 : monitor_v1.3.4 (Phase 6.5: 自動推播代碼極簡化)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [推播升級] 串接 telegram_service，實作自動推播單行極簡格式。
-#   2. [防洗機制] 加入警報判定端的時區隔離，確保休市期間的標的不會被誤觸發警報。
-#   3. [重大修復] (v1.3.3) 導入 is_monitoring 參數。若未啟動監測，引擎只提供 UI 報價，嚴格封鎖自動推播與警報。
+#   1. [防洗機制] 加入警報判定端的時區隔離，確保休市期間的標的不會被誤觸發警報。
+#   2. [重大修復] 導入 is_monitoring 參數，若未啟動監測則封鎖自動推播與警報。
+#   3. [顯示優化] (v1.3.4) UI 顯示與推播脫鉤，自動推播強制只顯示純代碼 (例: 00631L)，達成極簡視覺。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 基礎環境與冷卻記憶體初始化
 #   - 2️⃣ 高頻報價與資料解析模組
-#   - 3️⃣ 警報觸發與冷卻邏輯 
-#   - 4️⃣ 引擎主程序 (🔥 導入 is_monitoring 阻斷閘門)
+#   - 3️⃣ 警報觸發與冷卻邏輯 (🔥 變更推播命名萃取邏輯)
+#   - 4️⃣ 引擎主程序 
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -112,9 +112,8 @@ def evaluate_alerts(row, quote, tz_now):
     current_price = quote['current']
     change_pct = quote['change_pct']
     
-    clean_name = str(row['display_name']).strip()
-    if not clean_name or clean_name == ticker:
-        clean_name = ticker.replace('.TW', '')
+    # 🔥 變更邏輯：強制過濾中文，只保留去尾綴純代碼給推播系統
+    clean_name = ticker.replace('.TW', '')
     
     alerts = []
     thresholds = parse_custom_values(row['thresholds'])
@@ -166,7 +165,6 @@ def run_radar_scan(is_monitoring=False):
     target_idx = '^TWII' if is_tw_time else '^IXIC'
     idx_name = "TW" if is_tw_time else "US"
     
-    # 🌟 閘門 1：只有在監測狀態下，才執行大盤 15 分鐘常規廣播
     if is_monitoring:
         idx_interval_id = f"IDX_{tz_now.strftime('%Y%m%d_%H')}_{(tz_now.minute // 15) * 15:02d}"
         if _ALERT_HISTORY.get('INDEX') != idx_interval_id:
@@ -180,13 +178,11 @@ def run_radar_scan(is_monitoring=False):
     if targets_df.empty:
         return {}, []
 
-    # 為了維持 UI 全時段顯示，這裡依然抓取所有目標的報價
     tickers = targets_df['ticker'].tolist()
     quotes = fetch_realtime_quotes(tickers)
     
     all_triggered_alerts = []
     
-    # 🌟 閘門 2：只有在監測狀態下，才去計算並觸發個股警報
     if is_monitoring:
         for _, row in targets_df.iterrows():
             if row['ticker'] in quotes:
