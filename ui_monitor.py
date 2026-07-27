@@ -2,18 +2,19 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.9.4 (Phase 6.5: 手動推播時區隔離過濾)
+# 程式版本 : ui_v1.9.5 (Phase 6.5: 拆除快取封印與接通主開關)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [快取解套] 將 tickers_tuple 導入 st.cache_data 裝飾器，確保每次新增股票時動態破除舊快取，秒速顯示新小卡。
-#   2. [顯示優化] 強化標題智慧去重邏輯，徹底根除「NVDA NVDA」等重複字眼。
-#   3. [功能升級] (v1.9.4) 手動推播加入「時區隔離過濾」，確保台股時間只推台股，美股時間只推美股，維持版面極簡。
+#   1. [顯示優化] 強化標題智慧去重邏輯，徹底根除「NVDA NVDA」等重複字眼。
+#   2. [功能升級] 手動推播加入「時區隔離過濾」，確保台股時間只推台股，美股時間只推美股。
+#   3. [重大修復] (v1.9.5) 徹底移除 @st.cache_data 封印，確保背景警報能被真實觸發。
+#   4. [重大修復] (v1.9.5) 將 st.session_state.monitoring 狀態傳遞給引擎，實作物理開關。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 資料獲取與動態快取防護
-#   - 2️⃣ 介面渲染主程式
+#   - 1️⃣ 資料獲取與動態快取防護 (🔥 移除快取)
+#   - 2️⃣ 介面渲染主程式 (🔥 導入狀態傳遞)
 #   - 3️⃣ 市場群組渲染器 
-#   - 4️⃣ 系統工具組與推播測試元件 (🔥 時區過濾閘門)
+#   - 4️⃣ 系統工具組與推播測試元件
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -26,11 +27,10 @@ from core import engine_monitor
 from services.telegram_service import send_telegram_message, build_qbs_tg_msg
 
 # ==========================================================
-# 1️⃣ 資料獲取與動態快取防護
+# 1️⃣ 資料獲取 (🔥 移除快取，確保警報真實觸發)
 # ==========================================================
-@st.cache_data(ttl=60, show_spinner=False)
-def get_cached_radar_data(tickers_tuple):
-    quotes, alerts = engine_monitor.run_radar_scan()
+def get_realtime_radar_data(tickers_tuple, is_monitoring):
+    quotes, alerts = engine_monitor.run_radar_scan(is_monitoring)
     indices = engine_monitor.fetch_realtime_quotes(['^TWII', '^IXIC'])
     quotes.update(indices)
     return quotes, alerts
@@ -47,9 +47,12 @@ def render_radar_dashboard():
         return
 
     current_tickers = tuple(targets_df['ticker'].tolist())
+    
+    # 🌟 獲取全域監測狀態 (預設為 False)
+    is_monitoring = st.session_state.get('monitoring', False)
 
     with st.spinner("📡 正在擷取即時報價與掃描防線..."):
-        quotes, alerts = get_cached_radar_data(current_tickers)
+        quotes, alerts = get_realtime_radar_data(current_tickers, is_monitoring)
 
     tw_targets = targets_df[targets_df['market'] == 'tw']
     us_targets = targets_df[targets_df['market'] == 'us']
@@ -182,11 +185,11 @@ def render_market_group(market_type, targets_df, quotes, alerts):
     st.markdown(cards_html, unsafe_allow_html=True)
 
 # ==========================================================
-# 4️⃣ 系統工具組與推播測試元件 (🔥 時區過濾閘門)
+# 4️⃣ 系統工具組與推播測試元件
 # ==========================================================
 def render_telegram_manual_test_ui():
     """
-    實作手動推播的智慧判斷 (V1.9.4 時區隔離升級)：
+    實作手動推播的智慧判斷：
     1. 強制第一行發送當下時區的大盤報價。
     2. 依據時區過濾小卡 (台股時間只抓 .TW，美股時間剔除 .TW)。
     3. 全系列字串組合後一次發送，並統一加上 🛠️手動 標籤。
@@ -215,14 +218,12 @@ def render_telegram_manual_test_ui():
                 # 步驟 2: 檢查並透過「時區閘門」過濾小卡資訊
                 targets_df = engine_monitor.get_monitor_targets()
                 if not targets_df.empty:
-                    # 🌟 時區隔離過濾
                     if is_tw_time:
                         targets_df = targets_df[targets_df['ticker'].str.contains(r'\.TW', na=False, regex=True)]
                     else:
                         targets_df = targets_df[~targets_df['ticker'].str.contains(r'\.TW', na=False, regex=True)]
                     
                     if not targets_df.empty:
-                        # 只針對當前活躍市場的標的抓取報價，節省資源
                         current_tickers = targets_df['ticker'].tolist()
                         quotes = engine_monitor.fetch_realtime_quotes(current_tickers)
                         
