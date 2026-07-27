@@ -2,26 +2,26 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : QBS_app.py
-# 程式版本 : QBS_v4.15.0 (Phase 6.5: 復活心跳引擎與狀態推播)
+# 程式版本 : QBS_v4.16.0 (Phase 6.5: 台股下拉選單動態智慧顯示)
 #
 # 📋 進版說明 (Version Notes):
 #   1. [核心修復] 導入 streamlit_autorefresh，復活心跳引擎，確保自動刷新與背景警報觸發。
 #   2. [推播升級] 加入「開始/暫停」狀態變更時的 Telegram 通知，並具備時區智慧隔離 (TW/US)。
-#   3. [邏輯防呆] 避免重複按下按鈕產生洗頻推播。
+#   3. [顯示優化] (v4.16.0) 實作台股下拉選單 (TW) 動態加工廠，強制顯示「代碼 + 名稱」(例: 0050 元大台灣50)，且不修改底層資料。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 頁面設定與全域配置
 #   - 2️⃣ 動態字典管理 
 #   - 3️⃣ UX 連動回呼函式與信號燈初始化 
-#   - 4️⃣ 系統全域常數與共用 UI 渲染 
-#   - 5️⃣ 側邊欄控制面板 (🔥 升級開關防呆與推播邏輯)
+#   - 4️⃣ 系統全域常數與共用 UI 渲染 (🔥 新增 tw 智慧顯示過濾器)
+#   - 5️⃣ 側邊欄控制面板 (🔥 套用 tw 選單過濾器)
 #   - 6️⃣ 戰情室與淺色版本卡片
-#   - 7️⃣ 全域心跳引擎 (🔥 重大修復)
+#   - 7️⃣ 全域心跳引擎 
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh  # 🔥 復活心跳所需
+from streamlit_autorefresh import st_autorefresh
 import datetime
 import pytz
 import os
@@ -35,7 +35,7 @@ from core import db_manager
 from core import data_fetcher
 import ui_strategy
 import ui_monitor
-from services.telegram_service import send_telegram_message  # 🔥 匯入推播服務
+from services.telegram_service import send_telegram_message
 
 # ==========================================================
 # 1️⃣ 頁面設定與全域配置
@@ -53,7 +53,7 @@ def load_css(file_path):
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 load_css(os.path.join("assets", "style.css"))
 
-APP_VERSION = "QBS_V4.15.0"
+APP_VERSION = "QBS_V4.16.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 DICT_PATH = os.path.join(BASE_DIR, "config", "stock_dict.json")
@@ -128,6 +128,17 @@ def sidebar_header(icon, title):
 tw_options = ["--- 請選擇 ---"] + sorted([k for k in stock_dict.keys() if k.endswith(".TW")])
 us_options = ["--- 請選擇 ---"] + sorted([k for k in stock_dict.keys() if not k.endswith(".TW")])
 
+# 🔥 實作台股專屬下拉選單動態加工廠
+def format_tw_option(x):
+    if x == "--- 請選擇 ---": 
+        return x
+    code = x.replace(".TW", "")
+    raw_name = stock_dict.get(x, x)
+    # 防呆：若名稱已包含代碼，則直接顯示；否則進行無縫黏合
+    if code in raw_name:
+        return raw_name
+    return f"{code} {raw_name}"
+
 # ==========================================================
 # 5️⃣ 側邊欄控制面板
 # ==========================================================
@@ -159,7 +170,6 @@ with st.sidebar:
             sidebar_header("▶️", "執行股票監測")
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
-                # 🔥 升級：開始推播與防呆判斷
                 if st.button("開始", use_container_width=True, key="start_mon"): 
                     if not st.session_state.monitoring:
                         st.session_state.monitoring = True
@@ -167,7 +177,6 @@ with st.sidebar:
                         prefix = "TW" if 6 <= now_tpe.hour <= 18 else "US"
                         send_telegram_message(f"🎯{prefix} | 🟢開始監測")
             with col_btn2:
-                # 🔥 升級：暫停推播與防呆判斷
                 if st.button("暫停", use_container_width=True, key="stop_mon"): 
                     if st.session_state.monitoring:
                         st.session_state.monitoring = False
@@ -182,8 +191,9 @@ with st.sidebar:
             sidebar_header("➕", "新增即時監控")
             market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_a")
             
+            # 🔥 套用 tw 專屬動態顯示加工廠 format_tw_option
             if "台灣" in market_choice:
-                selected_db = st.selectbox("tw 資料庫選取", tw_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_tw_val", on_change=on_sel_change)
+                selected_db = st.selectbox("tw 資料庫選取", tw_options, format_func=format_tw_option, key="sel_tw_val", on_change=on_sel_change)
             else:
                 selected_db = st.selectbox("us 資料庫選取", us_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_val", on_change=on_sel_change)
                 
@@ -283,8 +293,9 @@ with st.sidebar:
             sidebar_header("➕", "新增回測標的")
             market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_b")
             
+            # 🔥 同樣為頁面 B 的 tw 選單套用動態顯示加工廠 format_tw_option
             if "台灣" in market_choice:
-                selected_db_b = st.selectbox("tw 資料庫選取", tw_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_tw_val_b", on_change=on_sel_change_b)
+                selected_db_b = st.selectbox("tw 資料庫選取", tw_options, format_func=format_tw_option, key="sel_tw_val_b", on_change=on_sel_change_b)
             else:
                 selected_db_b = st.selectbox("us 資料庫選取", us_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_val_b", on_change=on_sel_change_b)
                 
@@ -411,7 +422,7 @@ elif current_page == "🎯 頁面 B : 策略回測戰情":
     ui_strategy.render_backtest_dashboard()
 
 # ==========================================================
-# 7️⃣ 全域心跳引擎 (🔥 確保自動刷新與警報掃描)
+# 7️⃣ 全域心跳引擎 
 # ==========================================================
 refresh_interval = st.session_state.get("refresh_a", 30) if current_page == "📡 頁面 A : 即時雷達監測" else st.session_state.get("refresh_b", 30)
 st_autorefresh(interval=refresh_interval * 1000, key="qbs_heartbeat")
