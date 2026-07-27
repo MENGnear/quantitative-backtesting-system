@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.3.2 (Phase 6.5: 自動推播時區隔離確保)
+# 程式版本 : monitor_v1.3.3 (Phase 6.5: 接收並執行主開關指令)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [核心重構] 徹底分離台股與美股的 yf.download 請求，防止時差與休市導致的 NaN 空值互相干擾，修復美股無法讀取問題。
-#   2. [推播升級] 串接 telegram_service，實作自動推播單行極簡格式。
-#   3. [防洗機制] (v1.3.2) 加入警報判定端的時區隔離，確保休市期間的標的不會被誤觸發警報，同時不影響 UI 全時段顯示。
+#   1. [推播升級] 串接 telegram_service，實作自動推播單行極簡格式。
+#   2. [防洗機制] 加入警報判定端的時區隔離，確保休市期間的標的不會被誤觸發警報。
+#   3. [重大修復] (v1.3.3) 導入 is_monitoring 參數。若未啟動監測，引擎只提供 UI 報價，嚴格封鎖自動推播與警報。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 基礎環境與冷卻記憶體初始化
-#   - 2️⃣ 高頻報價與資料解析模組 (分流機制)
+#   - 2️⃣ 高頻報價與資料解析模組
 #   - 3️⃣ 警報觸發與冷卻邏輯 
-#   - 4️⃣ 引擎主程序 (🔥 時區隔離警報閘門)
+#   - 4️⃣ 引擎主程序 (🔥 導入 is_monitoring 阻斷閘門)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -34,7 +34,6 @@ DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 # ==========================================================
 # 1️⃣ 基礎環境與冷卻記憶體初始化
 # ==========================================================
-# 儲存 Bucket ID，例如 {'2330.TW': '20260726_10_05', 'INDEX': '20260726_10_15'}
 _ALERT_HISTORY = {}
 
 def get_monitor_targets():
@@ -44,10 +43,9 @@ def get_monitor_targets():
         return pd.read_sql_query("SELECT * FROM monitor_pool", conn)
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組 (分流機制)
+# 2️⃣ 高頻報價與資料解析模組
 # ==========================================================
 def fetch_realtime_quotes(tickers):
-    """分離台美股下載，防止 Pandas 互相干擾導致 NaN 誤刪"""
     quotes = {}
     if not tickers:
         return quotes
@@ -93,7 +91,6 @@ def fetch_realtime_quotes(tickers):
         except Exception as e:
             pass
 
-    # 分別執行，互不干擾
     process_download(tw_tickers)
     process_download(us_tickers)
     
@@ -108,14 +105,13 @@ def parse_custom_values(val_str):
         return []
 
 # ==========================================================
-# 3️⃣ 警報觸發與冷卻邏輯 (🔥 導入 5 分鐘獨立事件)
+# 3️⃣ 警報觸發與冷卻邏輯
 # ==========================================================
 def evaluate_alerts(row, quote, tz_now):
     ticker = row['ticker']
     current_price = quote['current']
     change_pct = quote['change_pct']
     
-    # 萃取乾淨名稱用於推播
     clean_name = str(row['display_name']).strip()
     if not clean_name or clean_name == ticker:
         clean_name = ticker.replace('.TW', '')
@@ -128,21 +124,18 @@ def evaluate_alerts(row, quote, tz_now):
     is_triggered = False
     trigger_reasons = []
 
-    # 1. 檢查門檻 (漲跌幅絕對值)
     for th in thresholds:
         if abs(change_pct) >= th:
             is_triggered = True
             trigger_reasons.append(f"達標 {th}%")
             break
 
-    # 2. 檢查進場 (現價 >= 設定值)
     for entry in entry_prices:
         if current_price >= entry:
             is_triggered = True
             trigger_reasons.append(f"進場達標")
             break
 
-    # 3. 檢查出場 (現價 <= 設定值)
     for exit_p in exit_prices:
         if current_price <= exit_p:
             is_triggered = True
@@ -150,11 +143,9 @@ def evaluate_alerts(row, quote, tz_now):
             break
 
     if is_triggered:
-        # 紀錄 UI 顯示用的警報
         reason_str = "及".join(trigger_reasons)
         alerts.append({'ticker': ticker, 'type': '🚨 觸發', 'message': f"{reason_str} (${current_price})"})
         
-        # 5 分鐘區間防洗頻鎖定 (Bucket Lock) - 獨立事件發送
         current_interval_id = f"{tz_now.strftime('%Y%m%d_%H')}_{(tz_now.minute // 5) * 5:02d}"
         
         if _ALERT_HISTORY.get(ticker) != current_interval_id:
@@ -165,29 +156,27 @@ def evaluate_alerts(row, quote, tz_now):
     return alerts
 
 # ==========================================================
-# 4️⃣ 引擎主程序 (🔥 導入時區隔離警報閘門)
+# 4️⃣ 引擎主程序
 # ==========================================================
-def run_radar_scan():
+def run_radar_scan(is_monitoring=False):
     targets_df = get_monitor_targets()
     tz_now = datetime.datetime.now(pytz.timezone('Asia/Taipei'))
     
-    # --- A. 大盤 15 分鐘固定推播機制 (獨立事件) ---
     is_tw_time = 6 <= tz_now.hour <= 18
     target_idx = '^TWII' if is_tw_time else '^IXIC'
     idx_name = "TW" if is_tw_time else "US"
     
-    # 15 分鐘區間防洗頻鎖定 (Bucket Lock)
-    idx_interval_id = f"IDX_{tz_now.strftime('%Y%m%d_%H')}_{(tz_now.minute // 15) * 15:02d}"
-    
-    if _ALERT_HISTORY.get('INDEX') != idx_interval_id:
-        idx_quotes = fetch_realtime_quotes([target_idx])
-        if target_idx in idx_quotes:
-            q = idx_quotes[target_idx]
-            msg = build_qbs_tg_msg(idx_name, q['current'], q['change_pct'], is_manual=False)
-            send_telegram_message(msg)
-            _ALERT_HISTORY['INDEX'] = idx_interval_id
+    # 🌟 閘門 1：只有在監測狀態下，才執行大盤 15 分鐘常規廣播
+    if is_monitoring:
+        idx_interval_id = f"IDX_{tz_now.strftime('%Y%m%d_%H')}_{(tz_now.minute // 15) * 15:02d}"
+        if _ALERT_HISTORY.get('INDEX') != idx_interval_id:
+            idx_quotes = fetch_realtime_quotes([target_idx])
+            if target_idx in idx_quotes:
+                q = idx_quotes[target_idx]
+                msg = build_qbs_tg_msg(idx_name, q['current'], q['change_pct'], is_manual=False)
+                send_telegram_message(msg)
+                _ALERT_HISTORY['INDEX'] = idx_interval_id
             
-    # --- B. 個股雷達掃描與自動警報 ---
     if targets_df.empty:
         return {}, []
 
@@ -196,12 +185,14 @@ def run_radar_scan():
     quotes = fetch_realtime_quotes(tickers)
     
     all_triggered_alerts = []
-    for _, row in targets_df.iterrows():
-        if row['ticker'] in quotes:
-            # 🌟 時區隔離閘門：只評估屬於當前活躍市場的個股警報
-            is_tw_stock = '.TW' in row['ticker']
-            if (is_tw_time and is_tw_stock) or (not is_tw_time and not is_tw_stock):
-                triggered = evaluate_alerts(row, quotes[row['ticker']], tz_now)
-                all_triggered_alerts.extend(triggered)
+    
+    # 🌟 閘門 2：只有在監測狀態下，才去計算並觸發個股警報
+    if is_monitoring:
+        for _, row in targets_df.iterrows():
+            if row['ticker'] in quotes:
+                is_tw_stock = '.TW' in row['ticker']
+                if (is_tw_time and is_tw_stock) or (not is_tw_time and not is_tw_stock):
+                    triggered = evaluate_alerts(row, quotes[row['ticker']], tz_now)
+                    all_triggered_alerts.extend(triggered)
             
     return quotes, all_triggered_alerts
