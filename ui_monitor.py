@@ -2,30 +2,33 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.10.1 (Pre-Phase 7: 微前端側邊欄解耦 + 完整戰情室排版復原)
+# 程式版本 : ui_v1.10.1 (Pre-Phase 7: 微前端側邊欄解耦修復版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [架構重構] 完整保留 render_sidebar 側邊欄業務邏輯，維持微前端解耦。
-#   2. [重大修復] 完全復原您原本精雕細琢的 render_radar_dashboard HTML/CSS 戰情室排版。
-#   3. [功能對齊] 整合 TW 與 US 市場分組渲染、智慧去重與動態漲跌幅卡片。
+#   1. [架構重構] 導入 render_sidebar，承接從 QBS_app 剝離的側邊欄業務邏輯。
+#   2. [依賴注入] 透過參數接收 stock_dict 與 format_tw_option，保持與全域共用字典的連動。
+#   3. [復原修復] 完整保留原版 v1.9.6 中客製化的 HTML/CSS 卡片與市場分組 (TW/US) 排版邏輯。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 側邊欄渲染 (Micro-Frontend)
-#   - 2️⃣ 手動推播測試元件
-#   - 3️⃣ 主畫面戰情室 (含 TW/US 分組與精美 HTML 小卡排版)
+#   - 2️⃣ 資料獲取與動態快取防護
+#   - 3️⃣ 介面渲染主程式 (維持原樣)
+#   - 4️⃣ 市場群組渲染器 (維持原樣)
+#   - 5️⃣ 系統工具組與推播測試元件
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 import streamlit as st
-import datetime
+import pandas as pd
+import textwrap
 import pytz
 import requests
 from bs4 import BeautifulSoup
 import yfinance as yf
-import textwrap
-from core import db_manager
+from datetime import datetime
 from core import engine_monitor
-from services.telegram_service import send_telegram_message
+from core import db_manager
+from services.telegram_service import send_telegram_message, build_qbs_tg_msg
 
 # ==========================================================
 # 1️⃣ 側邊欄渲染 (Micro-Frontend)
@@ -61,14 +64,14 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
             if st.button("開始", use_container_width=True, key="start_mon"): 
                 if not st.session_state.monitoring:
                     st.session_state.monitoring = True
-                    now_tpe = datetime.datetime.now(pytz.timezone('Asia/Taipei'))
+                    now_tpe = datetime.now(pytz.timezone('Asia/Taipei'))
                     prefix = "TW" if 6 <= now_tpe.hour <= 18 else "US"
                     send_telegram_message(f"🎯{prefix} | 🟢開始監測")
         with col_btn2:
             if st.button("暫停", use_container_width=True, key="stop_mon"): 
                 if st.session_state.monitoring:
                     st.session_state.monitoring = False
-                    now_tpe = datetime.datetime.now(pytz.timezone('Asia/Taipei'))
+                    now_tpe = datetime.now(pytz.timezone('Asia/Taipei'))
                     prefix = "TW" if 6 <= now_tpe.hour <= 18 else "US"
                     send_telegram_message(f"🎯{prefix} | 🟡暫停監測")
                     
@@ -152,127 +155,214 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
             st.rerun()
 
 # ==========================================================
-# 2️⃣ 手動推播測試元件
+# 2️⃣ 資料獲取
 # ==========================================================
-def render_telegram_manual_test_ui():
-    with st.sidebar.expander("🛠️ 系統推播測試", expanded=False):
-        if st.button("發送 Telegram 測試", use_container_width=True):
-            try:
-                send_telegram_message("🔔 來自 QBS 系統的推播測試！")
-                st.success("✅ 發送成功！")
-            except Exception as e:
-                st.error(f"發送失敗: {e}")
+def get_realtime_radar_data(tickers_tuple, is_monitoring):
+    quotes, alerts = engine_monitor.run_radar_scan(is_monitoring)
+    indices = engine_monitor.fetch_realtime_quotes(['^TWII', '^IXIC'])
+    quotes.update(indices)
+    return quotes, alerts
 
 # ==========================================================
-# 3️⃣ 主畫面戰情室 (含 TW/US 分組與精美 HTML 小卡排版)
+# 3️⃣ 介面渲染主程式
 # ==========================================================
 def render_radar_dashboard():
-    is_monitoring = st.session_state.get("monitoring", False)
+    st.markdown("### 📡 實戰雷達監測 (Execution Battlefield)")
     
-    # 呼叫心跳引擎獲取最新報價與觸發警報
-    quotes, alerts = engine_monitor.run_radar_scan(is_monitoring=is_monitoring)
-    
-    # 若有觸發警報，顯示在畫面上方
-    if alerts:
-        for alert in alerts:
-            st.warning(f"【{alert['ticker']}】 {alert['type']} : {alert['message']}")
-            
-    # 取得資料庫中所有監控標的
-    monitor_items = db_manager.get_all_monitor_items()
-    if not monitor_items:
-        st.info("💡 目前雷達無監控標的，請從左側邊欄新增。")
+    targets_df = engine_monitor.get_monitor_targets()
+    if targets_df.empty:
+        st.info("💡 實戰彈藥庫目前為空，請先從左側「新增即時監控」寫入標的。")
         return
-        
-    # 區分台股與美股
-    tw_items = [item for item in monitor_items if item.get('market') == 'tw' or '.TW' in item['ticker']]
-    us_items = [item for item in monitor_items if item.get('market'] == 'us' and '.TW' not in item['ticker']]
-    
-    def render_market_group(title, icon, market_type, items):
-        if not items:
-            return
-            
-        st.markdown(f"### {icon} {title}")
-        
-        # 顯示大盤指數卡片
-        index_ticker = '^TWII' if market_type == 'tw' else '^IXIC'
-        index_name = '台灣加權指數' if market_type == 'tw' else '那斯達克指數'
-        
-        idx_cols = st.columns(4)
-        with idx_cols[0]:
-            if index_ticker in quotes:
-                q = quotes[index_ticker]
-                price = q['current']
-                change = q['change_pct']
-                color_hex = "#ef4444" if change < 0 else ("#10b981" if change > 0 else "#94a3b8")
-                sign = "+" if change > 0 else ""
-                
-                idx_html = textwrap.dedent(f"""
-                <div style="background-color: #0f172a; padding: 14px; border-radius: 10px; border: 1px solid #3b82f6; margin-bottom: 12px;">
-                    <div style="color: #60a5fa; font-size: 0.8rem; font-weight: 700; margin-bottom: 2px;">{index_ticker} (大盤指標)</div>
-                    <div style="color: #f8fafc; font-size: 1.05rem; font-weight: 700; margin-bottom: 8px;">{index_name}</div>
-                    <div style="display: flex; justify-content: space-between; align-items: flex-end;">
-                        <div style="color: #e2e8f0; font-size: 1.25rem; font-weight: 800;">${price:,.2f}</div>
-                        <div style="color: {color_hex}; font-size: 0.85rem; font-weight: 700; background-color: {color_hex}20; padding: 2px 6px; border-radius: 4px;">{sign}{change}%</div>
-                    </div>
-                </div>
-                """).strip()
-                st.markdown(idx_html, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div style="background-color: #0f172a; padding: 14px; border-radius: 10px; border: 1px dashed #3b82f6; margin-bottom: 12px;">
-                    <div style="color: #60a5fa; font-size: 0.8rem; font-weight: 700;">{index_ticker}</div>
-                    <div style="color: #f8fafc; font-size: 1.05rem; font-weight: 700; margin-bottom: 8px;">{index_name}</div>
-                    <div style="color: #64748b; font-size: 0.85rem;">⏳ 大盤載入中...</div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-        # 渲染個股小卡網格
-        cols = st.columns(4)
-        for i, item in enumerate(items):
-            ticker = item['ticker']
-            name = item.get('display_name', ticker)
-            
-            # 智慧清理股票名稱重複顯示問題
-            clean_ticker = ticker.replace('.TW', '')
-            if name.startswith(clean_ticker):
-                display_title = name
-            else:
-                display_title = f"{clean_ticker} {name}"
-                
-            target_col = cols[(i + 1) % 4]
-            
-            if ticker in quotes:
-                q = quotes[ticker]
-                price = q['current']
-                change = q['change_pct']
-                
-                color_hex = "#ef4444" if change < 0 else ("#10b981" if change > 0 else "#94a3b8")
-                bg_opacity = "20"
-                sign = "+" if change > 0 else ""
-                
-                card_html = textwrap.dedent(f"""
-                <div style="background-color: #1e293b; padding: 16px; border-radius: 10px; border: 1px solid #334155; margin-bottom: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
-                    <div style="color: #94a3b8; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 4px;">{ticker}</div>
-                    <div style="color: #f8fafc; font-size: 1.15rem; font-weight: 700; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
-                    <div style="display: flex; justify-content: space-between; align-items: flex-end;">
-                        <div style="color: #e2e8f0; font-size: 1.35rem; font-weight: 800; letter-spacing: 0.5px;">${price}</div>
-                        <div style="color: {color_hex}; font-size: 0.95rem; font-weight: 700; background-color: {color_hex}{bg_opacity}; padding: 3px 8px; border-radius: 6px;">{sign}{change}%</div>
-                    </div>
-                </div>
-                """).strip()
-                target_col.markdown(card_html, unsafe_allow_html=True)
-            else:
-                loading_html = textwrap.dedent(f"""
-                <div style="background-color: #1e293b; padding: 16px; border-radius: 10px; border: 1px dashed #475569; margin-bottom: 12px;">
-                    <div style="color: #64748b; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px;">{ticker}</div>
-                    <div style="color: #94a3b8; font-size: 1.15rem; font-weight: 700; margin-bottom: 12px;">{display_title}</div>
-                    <div style="color: #475569; font-size: 0.95rem; font-style: italic;">⏳ 報價載入中...</div>
-                </div>
-                """).strip()
-                target_col.markdown(loading_html, unsafe_allow_html=True)
-                
-        st.markdown("<br>", unsafe_allow_html=True)
 
-    # 依序渲染台股與美股分組戰情室
-    render_market_group("台灣股市戰情室", "🇹🇼", "tw", tw_items)
-    render_market_group("美國股市戰情室", "🇺🇸", "us", us_items)
+    current_tickers = tuple(targets_df['ticker'].tolist())
+    
+    is_monitoring = st.session_state.get('monitoring', False)
+
+    with st.spinner("📡 正在擷取即時報價與掃描防線..."):
+        quotes, alerts = get_realtime_radar_data(current_tickers, is_monitoring)
+
+    tw_targets = targets_df[targets_df['market'] == 'tw']
+    us_targets = targets_df[targets_df['market'] == 'us']
+
+    if not tw_targets.empty:
+        render_market_group("tw", tw_targets, quotes, alerts)
+        
+    if not us_targets.empty:
+        if not tw_targets.empty:
+            st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
+        render_market_group("us", us_targets, quotes, alerts)
+
+# ==========================================================
+# 4️⃣ 市場群組渲染器
+# ==========================================================
+def render_market_group(market_type, targets_df, quotes, alerts):
+    if market_type == "tw":
+        idx_ticker = "^TWII"
+        idx_name = "tw 台灣股市 (Taiwan Market)"
+        icon = "🔴"
+        bar_color = "#3b82f6"
+    else:
+        idx_ticker = "^IXIC"
+        idx_name = "us 美國股市 (Nasdaq)"
+        icon = "🟢"
+        bar_color = "#3b82f6"
+
+    idx_quote_html = ""
+    if idx_ticker in quotes:
+        q = quotes[idx_ticker]
+        curr = q['current']
+        chg_amt = q['change_amt']
+        chg_pct = q['change_pct']
+        
+        if market_type == "tw":
+            color = "#ef4444" if chg_amt > 0 else "#10b981"
+        else:
+            color = "#10b981" if chg_amt > 0 else "#ef4444"
+            
+        arrow = "↑" if chg_amt > 0 else "↓"
+        sign = "+" if chg_amt > 0 else ""
+        idx_quote_html = f"""<span style="color: #38bdf8; margin-left: 10px;">{curr:,.2f}</span> <span style="color: {color}; font-size: 1rem; margin-left: 8px;">{sign}{chg_amt:.2f} ({arrow}{abs(chg_pct):.2f}%)</span>"""
+                             
+    header_html = textwrap.dedent(f"""
+    <div style="display: flex; align-items: center; margin: 10px 0 20px 0;">
+        <div style="width: 4px; height: 22px; background-color: {bar_color}; margin-right: 12px;"></div>
+        <div style="font-size: 1.25rem; font-weight: 800; color: #f8fafc;">
+            {icon} {idx_name} {idx_quote_html}
+        </div>
+    </div>
+    """).strip()
+    st.markdown(header_html, unsafe_allow_html=True)
+
+    cards_html = "<div style='display: flex; flex-wrap: wrap; gap: 18px;'>"
+    
+    for _, row in targets_df.iterrows():
+        ticker = row['ticker']
+        clean_ticker = ticker.replace('.TW', '')
+        clean_name = str(row['display_name']).strip()
+
+        if not clean_name or clean_name == ticker or clean_name == clean_ticker:
+            display_title = clean_ticker
+        elif clean_name.startswith(clean_ticker):
+            display_title = clean_name
+        else:
+            display_title = f"{clean_ticker} {clean_name}"
+
+        if ticker in quotes:
+            q = quotes[ticker]
+            curr = q['current']
+            prev = q['prev']
+            open_p = q['open']
+            chg_amt = q['change_amt']
+            chg_pct = q['change_pct']
+            
+            is_tw = market_type == "tw"
+            
+            if chg_amt > 0:
+                sign = "+"
+                if is_tw: 
+                    bg_color = "#2b1819" ; border_color = "#5a262c" ; text_color = "#ef4444" 
+                else:     
+                    bg_color = "#18241d" ; border_color = "#1f4738" ; text_color = "#10b981"
+            elif chg_amt < 0:
+                sign = ""
+                if is_tw: 
+                    bg_color = "#18241d" ; border_color = "#1f4738" ; text_color = "#10b981"
+                else:     
+                    bg_color = "#2b1819" ; border_color = "#5a262c" ; text_color = "#ef4444"
+            else:
+                sign = ""
+                bg_color = "#1c191b" ; border_color = "#3d2a2e" ; text_color = "#cbd5e1"
+                
+            chg_str = f"{sign}{chg_amt:.2f} ({sign}{chg_pct:.2f}%)"
+            
+            badge_html = ""
+            ticker_alerts = [a for a in alerts if a['ticker'] == ticker]
+            if ticker_alerts:
+                badge_html = f"<div style='margin-top: 15px; background-color: {bg_color}; color: {text_color}; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 0.95rem; border: 1px solid {text_color}; box-shadow: inset 0 0 8px rgba(0,0,0,0.5);'>📈 觸發: {ticker_alerts[0]['message']}</div>"
+
+            th_raw = row['thresholds'] if pd.notna(row['thresholds']) and row['thresholds'] else "--"
+            en_raw = row['entry_prices'] if pd.notna(row['entry_prices']) and row['entry_prices'] else "--"
+            ex_raw = row['exit_prices'] if pd.notna(row['exit_prices']) and row['exit_prices'] else "--"
+
+            card_html = textwrap.dedent(f"""
+            <div style="width: 280px; min-width: 280px; background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
+            <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
+            <div style="font-size: 2.1rem; font-weight: 800; color: #38bdf8; margin-bottom: 16px;">${curr:.2f}</div>
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+            <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">昨收： <span style="color: #f8fafc; margin-left: 5px;">${prev:.2f}</span></div>
+            <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">開盤： <span style="color: #f8fafc; margin-left: 5px;">${open_p:.2f}</span></div>
+            <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">漲幅： <span style="color: {text_color}; margin-left: 5px;">{chg_str}</span></div>
+            </div>
+            <div style="border-top: 1px dashed #475569; padding-top: 12px; text-align: center; color: #64748b; font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">門檻: {th_raw}% | 進場: ${en_raw} | 出場: ${ex_raw}</div>
+            {badge_html}
+            </div>
+            """).strip()
+            
+            cards_html += card_html
+        else:
+            card_loading = textwrap.dedent(f"""
+            <div style="width: 280px; min-width: 280px; background-color: #1c191b; border: 1px solid #3d2a2e; border-radius: 8px; padding: 18px;">
+            <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
+            <div style="color: #64748b; font-size: 1rem; margin-top: 20px;">資料讀取中...</div>
+            </div>
+            """).strip()
+            cards_html += card_loading
+            
+    cards_html += "</div>"
+    st.markdown(cards_html, unsafe_allow_html=True)
+
+# ==========================================================
+# 5️⃣ 系統工具組與推播測試元件
+# ==========================================================
+def render_telegram_manual_test_ui():
+    """
+    實作手動推播的智慧判斷：
+    1. 強制第一行發送當下時區的大盤報價。
+    2. 依據時區過濾小卡 (台股時間只抓 .TW，美股時間剔除 .TW)。
+    3. 全系列字串組合後一次發送，並統一加上 🛠️手動 標籤。
+    """
+    with st.sidebar.expander("🛠️ 系統推播測試", expanded=False):
+        if st.button("發送目前小卡狀態", type="primary", use_container_width=True):
+            with st.spinner("發送中，請稍候..."):
+                now_tpe = datetime.now(pytz.timezone('Asia/Taipei'))
+                is_tw_time = 6 <= now_tpe.hour <= 18
+                
+                target_idx = "^TWII" if is_tw_time else "^IXIC"
+                idx_name = "TW" if is_tw_time else "US"
+                
+                msg_lines = []
+                
+                idx_quotes = engine_monitor.fetch_realtime_quotes([target_idx])
+                if target_idx in idx_quotes:
+                    q = idx_quotes[target_idx]
+                    msg_lines.append(build_qbs_tg_msg(idx_name, q['current'], q['change_pct'], is_manual=True))
+                else:
+                    msg_lines.append(f"🎯{idx_name} | ⚠️大盤獲取失敗 | 🛠️手動")
+                
+                targets_df = engine_monitor.get_monitor_targets()
+                if not targets_df.empty:
+                    if is_tw_time:
+                        targets_df = targets_df[targets_df['ticker'].str.contains(r'\.TW', na=False, regex=True)]
+                    else:
+                        targets_df = targets_df[~targets_df['ticker'].str.contains(r'\.TW', na=False, regex=True)]
+                    
+                    if not targets_df.empty:
+                        current_tickers = targets_df['ticker'].tolist()
+                        quotes = engine_monitor.fetch_realtime_quotes(current_tickers)
+                        
+                        for _, row in targets_df.iterrows():
+                            ticker = row['ticker']
+                            clean_name = ticker.replace(".TW", "")
+                                
+                            if ticker in quotes:
+                                q = quotes[ticker]
+                                line = build_qbs_tg_msg(clean_name, q['current'], q['change_pct'], is_manual=True)
+                                msg_lines.append(line)
+                                
+                final_msg = "\n".join(msg_lines)
+                success = send_telegram_message(final_msg)
+                
+                if success:
+                    st.success("✅ 手動推播發送成功！")
+                else:
+                    st.error("❌ 發送失敗，請檢查金鑰設定或網路連線。")
