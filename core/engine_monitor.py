@@ -2,23 +2,21 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.4.0 (Phase 7: 市場作息感知與三階段推播管線)
+# 程式版本 : monitor_v1.7.0 (Pre-Phase 7: Step 4 - 倉儲層對接)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [重大修復] 導入 is_monitoring 參數，若未啟動監測則封鎖自動推播與警報。
-#   2. [顯示優化] UI 顯示與推播脫鉤，自動推播強制只顯示純代碼 (例: 00631L)，達成極簡視覺。
-#   3. [功能升級] (v1.4.0) 導入狀態機與作息感知。支援 🟢開盤 與 🔴收盤 通知，具備美東夏冬令自動切換。
-#   4. [邏輯重構] (v1.4.0) 實作三階段管線，確保收盤當下 (如 13:30) 能先發送最後一筆報價，再發送收盤通知。
+#   1. [架構升級] 徹底拔除 sqlite3 與硬編碼 DB 路徑，改由 monitor_repo 統一管理資料進出。
+#   2. [核心保留] 完整保留 v1.4.0 的 is_monitoring 閘門與三階段過濾管線。
+#   3. [時區感知] 完整保留美東夏冬令自動切換與開收盤通知機制。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 基礎環境與狀態記憶體初始化 (🔥 新增作息狀態機)
+#   - 1️⃣ 基礎環境與狀態記憶體初始化 (🔥 替換為 Repository)
 #   - 2️⃣ 高頻報價與資料解析模組
 #   - 3️⃣ 警報觸發與冷卻邏輯
 #   - 4️⃣ 引擎主程序 (🔥 三階段過濾管線)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
-import sqlite3
 import pandas as pd
 import yfinance as yf
 import datetime
@@ -26,11 +24,9 @@ import pytz
 import os
 import logging
 from services.telegram_service import send_telegram_message, build_qbs_tg_msg
+from core.repositories.monitor_repository import monitor_repo
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
 
 # ==========================================================
 # 1️⃣ 基礎環境與狀態記憶體初始化
@@ -40,10 +36,11 @@ _ALERT_HISTORY = {}
 _MARKET_STATE = {'TW': 'CLOSED', 'US': 'CLOSED'}
 
 def get_monitor_targets():
-    if not os.path.exists(DB_PATH):
-        return pd.DataFrame()
-    with sqlite3.connect(DB_PATH) as conn:
-        return pd.read_sql_query("SELECT * FROM monitor_pool", conn)
+    """
+    透過 monitor_repo 獲取監控標的 DataFrame。
+    徹底與底層資料庫解耦。
+    """
+    return monitor_repo.get_monitor_targets_df()
 
 # ==========================================================
 # 2️⃣ 高頻報價與資料解析模組
