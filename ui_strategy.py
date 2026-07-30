@@ -1,3 +1,20 @@
+# ==========================================================
+# ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
+# 專案名稱 : Quantitative Backtesting System (QBS)
+# 檔案名稱 : ui_strategy.py
+# 程式版本 : ui_v1.2.0 (Pre-Phase 7: 微前端側邊欄解耦)
+#
+# 📋 進版說明 (Version Notes):
+#   1. [架構重構] 導入 render_sidebar，承接從 QBS_app 剝離的回測專屬側邊欄邏輯。
+#   2. [領域隔離] 將「族群批次寫入」與「5 年歷史資料更新」等專屬回測的動作，完美收斂於此模組。
+#   3. [防呆傳遞] 透過依賴注入 (Dependency Injection) 接收全域字典，確保名稱轉換與雷達頁面一致。
+#
+# 🏷️ 區塊說明 (Block Description):
+#   - 1️⃣ 側邊欄渲染 (Micro-Frontend)
+#   - 2️⃣ 主畫面回測戰情室 (Phase 8 預留)
+# ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
+# ==========================================================
+
 import streamlit as st
 import os
 import json
@@ -7,6 +24,9 @@ import yfinance as yf
 from core import db_manager
 from core import data_fetcher
 
+# ==========================================================
+# 1️⃣ 側邊欄渲染 (Micro-Frontend)
+# ==========================================================
 def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_tw_option, sidebar_header):
     if "sel_tw_val_b" not in st.session_state: st.session_state.sel_tw_val_b = "--- 請選擇 ---"
     if "sel_us_val_b" not in st.session_state: st.session_state.sel_us_val_b = "--- 請選擇 ---"
@@ -80,7 +100,6 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         sector_options = ["--- 請選擇 ---"]
         sectors_data = {}
         
-        # 動態抓取根目錄 (確保不被模組位置影響)
         BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
         sector_file = os.path.join(BASE_DIR, "config", "sectors.json")
         if os.path.exists(sector_file):
@@ -123,3 +142,30 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         sidebar_header("⏱️", "系統運行狀態")
         refresh_sec_b = st.slider("刷新頻率(秒)", 5, 60, 30, key="refresh_b")
         if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
+
+# ==========================================================
+# 2️⃣ 主畫面戰情室 (Phase 8 預留)
+# ==========================================================
+def render_backtest_dashboard():
+    st.info("💡 策略回測引擎 (Phase 8) 即將上線。目前可透過左側邊欄建立回測標的池並預先下載 5 年 K 線數據。")
+    
+    backtest_items = db_manager.get_all_backtest_items()
+    if not backtest_items:
+        st.warning("目前回測池為空，請從左側邊欄新增標的或批次匯入族群。")
+        return
+        
+    st.markdown("### 📊 目前回測池標的")
+    cols = st.columns(4)
+    for i, item in enumerate(backtest_items):
+        ticker = item['ticker']
+        name = item.get('display_name', ticker)
+        market = "TW" if item.get('market') == 'tw' else "US"
+        
+        with cols[i % 4]:
+            st.markdown(f"""
+            <div style="background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; margin-bottom: 10px;">
+                <div style="color: #9ca3af; font-size: 0.8rem; margin-bottom: 5px;">{market} Market</div>
+                <div style="color: #f8fafc; font-size: 1.1rem; font-weight: bold;">{name}</div>
+                <div style="color: #38bdf8; font-size: 0.9rem;">{ticker}</div>
+            </div>
+            """, unsafe_allow_html=True)
