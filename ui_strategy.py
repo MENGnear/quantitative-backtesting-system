@@ -2,26 +2,29 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.2.0 (Pre-Phase 7: 微前端側邊欄解耦)
+# 程式版本 : ui_v1.2.1 (Pre-Phase 7: 微前端側邊欄解耦修復版)
 #
 # 📋 進版說明 (Version Notes):
 #   1. [架構重構] 導入 render_sidebar，承接從 QBS_app 剝離的回測專屬側邊欄邏輯。
-#   2. [領域隔離] 將「族群批次寫入」與「5 年歷史資料更新」等專屬回測的動作，完美收斂於此模組。
-#   3. [防呆傳遞] 透過依賴注入 (Dependency Injection) 接收全域字典，確保名稱轉換與雷達頁面一致。
+#   2. [領域隔離] 將「族群批次寫入」與「5 年歷史資料更新」等動作收斂於此模組。
+#   3. [復原修復] 完整保留原版 v1.0.0 中您設計的「分數門檻高光」、「底背離標籤」與「4 欄並排動態網格」UI。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 側邊欄渲染 (Micro-Frontend)
-#   - 2️⃣ 主畫面回測戰情室 (Phase 8 預留)
+#   - 2️⃣ 單張股票戰情小卡渲染 (維持原樣)
+#   - 3️⃣ 頁面 B 回測戰情室主程式 (維持原樣)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 import streamlit as st
+import pandas as pd
 import os
 import json
 import requests
 from bs4 import BeautifulSoup
 import yfinance as yf
 from core import db_manager
+from core import engine_core
 from core import data_fetcher
 
 # ==========================================================
@@ -99,7 +102,6 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         sidebar_header("🗂️", "族群批次輸入")
         sector_options = ["--- 請選擇 ---"]
         sectors_data = {}
-        
         BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
         sector_file = os.path.join(BASE_DIR, "config", "sectors.json")
         if os.path.exists(sector_file):
@@ -144,28 +146,74 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
 
 # ==========================================================
-# 2️⃣ 主畫面戰情室 (Phase 8 預留)
+# 2️⃣ 單張股票戰情小卡渲染
+# ==========================================================
+def render_stock_card(row):
+    """渲染單張股票戰情小卡 (HTML/CSS)"""
+    total_score = row['總分']
+    if total_score >= 45:
+        score_color = "#10b981" 
+    elif total_score >= 30:
+        score_color = "#fbbf24" 
+    else:
+        score_color = "#ef4444" 
+        
+    divergence_tag = ""
+    if row['底背離'] == '✅':
+        divergence_tag = "<span style='background-color:#7c3aed; color:white; padding:2px 6px; border-radius:4px; font-size:0.75rem; font-weight:bold; margin-left:8px;'>🚨 底背離</span>"
+
+    card_html = f"""
+    <div style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-size: 1.1rem; font-weight: 700; color: #38bdf8;">
+                {row['代碼']} <span style="font-size: 0.9rem; color: #94a3b8;">{row['名稱']}</span>
+            </div>
+            {divergence_tag}
+        </div>
+        
+        <div style="display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #334155; padding-bottom: 8px;">
+            <div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600;">策略總分</div>
+            <div style="font-size: 2.2rem; font-weight: 800; color: {score_color}; line-height: 1;">
+                {int(total_score)}<span style="font-size: 1rem; color: #64748b; font-weight: 600;">/80</span>
+            </div>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; row-gap: 6px; font-size: 0.85rem;">
+            <div style="color: #cbd5e1;">收盤價：<span style="color: #f8fafc; font-weight: 600;">${row['收盤價']:.2f}</span></div>
+            <div style="color: #cbd5e1;">RSI_14：<span style="color: #f8fafc; font-weight: 600;">{row['RSI_14']:.1f}</span></div>
+            <div style="color: #94a3b8; font-size: 0.8rem;">趨勢(60)：<span style="color: #cbd5e1;">{int(row['趨勢分(60)'])}</span></div>
+            <div style="color: #94a3b8; font-size: 0.8rem;">紅利(20)：<span style="color: #cbd5e1;">{int(row['紅利分(20)'])}</span></div>
+        </div>
+    </div>
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
+
+# ==========================================================
+# 3️⃣ 頁面 B 回測戰情室主程式
 # ==========================================================
 def render_backtest_dashboard():
-    st.info("💡 策略回測引擎 (Phase 8) 即將上線。目前可透過左側邊欄建立回測標的池並預先下載 5 年 K 線數據。")
+    """負責頁面 B 的整體回測戰情室渲染"""
+    st.markdown("### 🎯 策略回測戰情室 (The Research Hub)")
     
-    backtest_items = db_manager.get_all_backtest_items()
-    if not backtest_items:
-        st.warning("目前回測池為空，請從左側邊欄新增標的或批次匯入族群。")
+    with st.spinner("🧠 核心引擎運算中，正在掃描技術指標與背離訊號..."):
+        # 呼叫核心大腦取得算好的 DataFrame
+        result_df = engine_core.run_trend_momentum_analysis()
+        
+    if result_df.empty:
+        st.warning("⚠️ 尚無回測結果，請確認左側「回測母體」是否有新增股票，並已下載歷史資料。")
         return
         
-    st.markdown("### 📊 目前回測池標的")
-    cols = st.columns(4)
-    for i, item in enumerate(backtest_items):
-        ticker = item['ticker']
-        name = item.get('display_name', ticker)
-        market = "TW" if item.get('market') == 'tw' else "US"
-        
-        with cols[i % 4]:
-            st.markdown(f"""
-            <div style="background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; margin-bottom: 10px;">
-                <div style="color: #9ca3af; font-size: 0.8rem; margin-bottom: 5px;">{market} Market</div>
-                <div style="color: #f8fafc; font-size: 1.1rem; font-weight: bold;">{name}</div>
-                <div style="color: #38bdf8; font-size: 0.9rem;">{ticker}</div>
-            </div>
-            """, unsafe_allow_html=True)
+    # 計算及格檔數
+    pass_count = len(result_df[result_df['總分'] >= 45])
+    st.info(f"💡 運算完成！共分析 **{len(result_df)}** 檔標的，其中有 **{pass_count}** 檔突破 45 分強勢門檻。")
+    
+    # 建立動態網格 (每排 4 欄)
+    cols_per_row = 4
+    for i in range(0, len(result_df), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for j in range(cols_per_row):
+            if i + j < len(result_df):
+                row_data = result_df.iloc[i + j]
+                with cols[j]:
+                    with st.container(border=True):
+                        render_stock_card(row_data)
