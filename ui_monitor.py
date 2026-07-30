@@ -2,11 +2,11 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.10.1 (Pre-Phase 7: 微前端側邊欄解耦修復版)
+# 程式版本 : ui_v1.10.2 (Pre-Phase 7: Step 4 - 倉儲層替換)
 #
 # 📋 進版說明 (Version Notes):
 #   1. [架構重構] 導入 render_sidebar，承接從 QBS_app 剝離的側邊欄業務邏輯。
-#   2. [依賴注入] 透過參數接收 stock_dict 與 format_tw_option，保持與全域共用字典的連動。
+#   2. [依賴解耦] 徹底拔除 core.db_manager，改用核心倉儲 monitor_repo 進行資料進出。
 #   3. [復原修復] 完整保留原版 v1.9.6 中客製化的 HTML/CSS 卡片與市場分組 (TW/US) 排版邏輯。
 #
 # 🏷️ 區塊說明 (Block Description):
@@ -27,7 +27,7 @@ from bs4 import BeautifulSoup
 import yfinance as yf
 from datetime import datetime
 from core import engine_monitor
-from core import db_manager
+from core.repositories.monitor_repository import monitor_repo
 from services.telegram_service import send_telegram_message, build_qbs_tg_msg
 
 # ==========================================================
@@ -45,7 +45,7 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
             st.session_state.sel_tw_val = "--- 請選擇 ---"
             st.session_state.sel_us_val = "--- 請選擇 ---"
 
-    monitor_items = db_manager.get_all_monitor_items()
+    monitor_items = monitor_repo.get_all_monitor_items()
     monitor_tickers = [item['ticker'] for item in monitor_items]
     
     monitor_map = {}
@@ -130,7 +130,7 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
                         if target_sym not in stock_dict or stock_dict[target_sym] != display_name:
                             stock_dict[target_sym] = display_name
                             save_stock_dict(stock_dict)
-                        db_manager.add_monitor_item(target_sym, display_name=display_name, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
+                        monitor_repo.add_monitor_item(target_sym, display_name=display_name, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
                         st.cache_data.clear()
                         st.session_state.clear_input_flag = True
                         st.success(f"✅ {display_name} ({target_sym}) 新增成功！")
@@ -142,7 +142,7 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         del_sym = st.selectbox("刪除目標", ["--- 請選擇 ---"] + monitor_tickers, format_func=lambda x: monitor_map.get(x, x) if x != "--- 請選擇 ---" else x, key="del_a", label_visibility="collapsed")
         if st.button("確認刪除", use_container_width=True, key="btn_del_a"):
             if del_sym != "--- 請選擇 ---":
-                db_manager.remove_monitor_item(del_sym)
+                monitor_repo.remove_monitor_item(del_sym)
                 st.cache_data.clear()
                 st.success(f"🗑️ 已移除標的")
                 st.rerun()
@@ -315,12 +315,6 @@ def render_market_group(market_type, targets_df, quotes, alerts):
 # 5️⃣ 系統工具組與推播測試元件
 # ==========================================================
 def render_telegram_manual_test_ui():
-    """
-    實作手動推播的智慧判斷：
-    1. 強制第一行發送當下時區的大盤報價。
-    2. 依據時區過濾小卡 (台股時間只抓 .TW，美股時間剔除 .TW)。
-    3. 全系列字串組合後一次發送，並統一加上 🛠️手動 標籤。
-    """
     with st.sidebar.expander("🛠️ 系統推播測試", expanded=False):
         if st.button("發送目前小卡狀態", type="primary", use_container_width=True):
             with st.spinner("發送中，請稍候..."):
