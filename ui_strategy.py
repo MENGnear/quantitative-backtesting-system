@@ -2,11 +2,11 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.2.2 (Pre-Phase 7: 回測倉儲層替換)
+# 程式版本 : ui_v1.2.3 (Pre-Phase 7: 完整重構與引擎搬遷版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [依賴解耦] 徹底拔除 core.db_manager，改用 strategy_repo 處理回測標的 CRUD。
-#   2. [架構重構] 維持 render_sidebar 的微前端解耦架構。
+#   1. [引擎搬遷] 配合 DDD 架構重構，將策略大腦匯入路徑更改為 engines.strategy。
+#   2. [依賴解耦] 徹底拔除 core.db_manager，改用 strategy_repo 處理回測標的 CRUD。
 #   3. [復原修復] 完整保留原版 v1.0.0 的「分數門檻高光」、「底背離標籤」與「4 欄並排動態網格」UI。
 # ==========================================================
 
@@ -18,7 +18,8 @@ import requests
 from bs4 import BeautifulSoup
 import yfinance as yf
 from core.repositories.strategy_repository import strategy_repo
-from core import engine_core
+# 🔥 核心升級：改由 engines 領域匯入新的策略大腦
+from engines import strategy as engine_core
 from core import data_fetcher
 
 # ==========================================================
