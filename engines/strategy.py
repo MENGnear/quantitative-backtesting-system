@@ -2,26 +2,14 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : engines/strategy.py
-# 程式版本 : engine_v1.2.0 (Pre-Phase 7: DDD 領域重構)
-#
-# 📋 進版說明 (Version Notes):
-#   1. [架構重構] 正式從 core/engine_core.py 搬遷至 engines/strategy.py，確立為運算應用層。
-#   2. [依賴反轉] 拔除回測母體的 sqlite3 直接連線，改由 strategy_repo 處理 CRUD 操作。
-#   3. [防呆強化] 確保即使歷史資料不足，run_trend_momentum_analysis 仍回傳標準的空 DataFrame，保護 UI。
-#
-# 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 基礎環境與倉儲對接
-#   - 2️⃣ 核心技術指標運算池 (通用兵工廠)
-#   - 3️⃣ 策略配方：趨勢動能評分系統 (Trend Momentum)
-#   - 4️⃣ 引擎主程序 (匯總與排序)
-# ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
+# 程式版本 : engine_v1.3.0 (Phase 7: 徹底去資料庫依賴版)
 # ==========================================================
 
 import pandas as pd
 import numpy as np
 import logging
 from core.repositories.strategy_repository import strategy_repo
-from core.database.connection_factory import ConnectionFactory
+from core.repositories.market_repository import market_repo
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -31,27 +19,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def get_backtest_targets():
     """透過 strategy_repo 獲取回測母體清單"""
     return strategy_repo.get_backtest_targets_df()
-
-def get_historical_data(ticker):
-    """
-    提取指定股票的歷史 K 線。
-    (註：此區塊透過 ConnectionFactory 取得連線，未來將重構至 market_repository)
-    """
-    db = ConnectionFactory.get_connection()
-    query = "SELECT Date, Open, High, Low, Close, Volume FROM daily_price WHERE ticker = ? ORDER BY Date ASC"
-    
-    # 使用 fetch_all 並轉換為 DataFrame
-    rows = db.fetch_all(query, (ticker,))
-    if not rows:
-        return pd.DataFrame()
-        
-    df = pd.DataFrame(rows)
-    df['Date'] = pd.to_datetime(df['Date'])
-    df.set_index('Date', inplace=True)
-    numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-    df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
-    df.dropna(inplace=True)
-    return df
 
 # ==========================================================
 # 2️⃣ 核心技術指標運算池 (通用兵工廠)
@@ -129,7 +96,6 @@ def evaluate_trend_momentum(df):
 def run_trend_momentum_analysis():
     """執行趨勢動能策略，輸出結構化總表 DataFrame供 UI 渲染"""
     targets_df = get_backtest_targets()
-    # 防呆：確保回傳的是標準空 DataFrame，而非 None
     if targets_df is None or targets_df.empty:
         return pd.DataFrame()
         
@@ -139,7 +105,8 @@ def run_trend_momentum_analysis():
         ticker = row['ticker']
         name = row['display_name']
         
-        hist_df = get_historical_data(ticker)
+        # 🔥 改由 market_repo 獲取資料，並具備 try-except 防呆
+        hist_df = market_repo.get_historical_data_df(ticker)
         if hist_df is None or hist_df.empty or len(hist_df) < 60:
             continue
             
