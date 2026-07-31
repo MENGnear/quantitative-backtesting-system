@@ -2,23 +2,20 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/data_fetcher.py
-# 程式版本 : core_v1.0.0 (Phase 2: 智慧增量下載與防封鎖模組)
+# 程式版本 : core_v1.1.0 (Pre-Phase 7: 倉儲層對接版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [新增] 實作 get_safe_session()，加入 User-Agent 偽裝與自動重試機制，防止 Yahoo 封鎖。
-#   2. [核心] 實作 smart_update_historical_data()，先查詢 SQLite 取得最新日期，計算缺口後動態決定下載 5y 還是 6mo。
-#   3. [優化] 使用 INSERT OR REPLACE 進行 SQLite 寫入，確保資料 100% 縫合連續且無重複。
+#   1. [架構重構] 徹底拔除 sqlite3，所有資料庫讀寫改由 market_repo 與 strategy_repo 處理。
+#   2. [核心保留] 100% 保留 v1.0.0 的 User-Agent 防封鎖與智慧增量邏輯 (5y/6mo 判斷)。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 模組匯入與防封鎖設定 (Imports & Session)
-#   - 2️⃣ 資料庫日期查詢 (DB Date Check)
-#   - 3️⃣ 智慧增量下載與寫入核心 (Smart Fetch & Upsert)
+#   - 2️⃣ 智慧增量下載與寫入核心 (Smart Fetch & Upsert)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 import yfinance as yf
 import pandas as pd
-import sqlite3
 import datetime
 import time
 import random
@@ -26,11 +23,10 @@ import logging
 from requests import Session
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import os
 
-# 絕對路徑對齊 db_manager
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(BASE_DIR, "database", "stock_system.db")
+# 🔥 引入新架構的倉儲層
+from core.repositories.market_repository import market_repo
+from core.repositories.strategy_repository import strategy_repo
 
 # 設定 Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -62,36 +58,19 @@ def get_safe_session():
     return session
 
 # ==========================================================
-# 2️⃣ 資料庫日期查詢 (Check Database Gap)
-# ==========================================================
-def get_last_date(ticker):
-    """查詢資料庫中該標的最新的一筆 K 線日期"""
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT MAX(Date) FROM daily_price WHERE ticker = ?", (ticker,))
-            result = cursor.fetchone()
-            return result[0] if result[0] else None
-    except Exception as e:
-        logging.error(f"查詢 {ticker} 最新日期失敗: {e}")
-        return None
-
-# ==========================================================
-# 3️⃣ 智慧增量下載與寫入核心 (Smart Fetch & Upsert)
+# 2️⃣ 智慧增量下載與寫入核心 (Smart Fetch & Upsert)
 # ==========================================================
 def smart_update_historical_data(tickers=None, force_5y=False):
     """
     智慧增量更新 K 線資料
-    - tickers: 股票代碼 List。若為 None，則自動從資料庫讀取全部關注清單。
+    - tickers: 股票代碼 List。若為 None，則自動從回測倉儲取得所有標的。
     - force_5y: 強制更新過去 5 年資料 (供 UI 上的強制按鈕使用)
     """
-    # 如果沒有提供 tickers，自動去 user_watchlist 把所有代碼撈出來
+    # 如果沒有提供 tickers，改由 strategy_repo 取得全庫標的
     if not tickers:
         try:
-            with sqlite3.connect(DB_PATH) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT ticker FROM user_watchlist")
-                tickers = [row[0] for row in cursor.fetchall()]
+            items = strategy_repo.get_all_backtest_items()
+            tickers = [item['ticker'] for item in items]
         except Exception as e:
             logging.error(f"讀取監測清單失敗: {e}")
             return False
@@ -112,7 +91,8 @@ def smart_update_historical_data(tickers=None, force_5y=False):
             if force_5y:
                 fetch_period = "5y"
             else:
-                last_date_str = get_last_date(ticker)
+                # 🔥 改由 market_repo 查詢最新日期
+                last_date_str = market_repo.get_last_date(ticker)
                 if not last_date_str:
                     fetch_period = "5y" # 全新股票，抓 5 年
                     logging.info(f"[{ticker}] 全新標的，準備下載 5 年歷史資料...")
@@ -148,15 +128,8 @@ def smart_update_historical_data(tickers=None, force_5y=False):
             # 順序對應: ticker, Date, Open, High, Low, Close, Volume
             data_to_insert = list(records[['ticker', 'Date', 'Open', 'High', 'Low', 'Close', 'Volume']].itertuples(index=False, name=None))
             
-            # 4. 寫入 SQLite (使用 INSERT OR REPLACE 進行完美重疊縫合)
-            with sqlite3.connect(DB_PATH) as conn:
-                cursor = conn.cursor()
-                cursor.executemany('''
-                    INSERT OR REPLACE INTO daily_price 
-                    (ticker, Date, Open, High, Low, Close, Volume) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', data_to_insert)
-                conn.commit()
+            # 4. 寫入 SQLite (交由倉儲層處理)
+            market_repo.upsert_historical_data(data_to_insert)
             
             updated_count += 1
             logging.info(f"[{ticker}] ✅ 成功更新 {len(data_to_insert)} 筆 K 線資料。")
@@ -170,11 +143,3 @@ def smart_update_historical_data(tickers=None, force_5y=False):
 
     logging.info(f"🎉 批次更新結束！共成功更新 {updated_count}/{len(tickers)} 檔標的。")
     return True
-
-# ----------------------------------------------------------
-# 單元測試 (本機開發測試用)
-# ----------------------------------------------------------
-if __name__ == "__main__":
-    print("🚀 測試啟動：智慧增量下載器")
-    # 測試單檔更新 (可嘗試先跑一次，再跑第二次看 Gap 邏輯)
-    smart_update_historical_data(["2330.TW", "AAPL"])
