@@ -2,18 +2,12 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.2.1 (Pre-Phase 7: 微前端側邊欄解耦修復版)
+# 程式版本 : ui_v1.2.2 (Pre-Phase 7: 回測倉儲層替換)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [架構重構] 導入 render_sidebar，承接從 QBS_app 剝離的回測專屬側邊欄邏輯。
-#   2. [領域隔離] 將「族群批次寫入」與「5 年歷史資料更新」等動作收斂於此模組。
-#   3. [復原修復] 完整保留原版 v1.0.0 中您設計的「分數門檻高光」、「底背離標籤」與「4 欄並排動態網格」UI。
-#
-# 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 側邊欄渲染 (Micro-Frontend)
-#   - 2️⃣ 單張股票戰情小卡渲染 (維持原樣)
-#   - 3️⃣ 頁面 B 回測戰情室主程式 (維持原樣)
-# ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
+#   1. [依賴解耦] 徹底拔除 core.db_manager，改用 strategy_repo 處理回測標的 CRUD。
+#   2. [架構重構] 維持 render_sidebar 的微前端解耦架構。
+#   3. [復原修復] 完整保留原版 v1.0.0 的「分數門檻高光」、「底背離標籤」與「4 欄並排動態網格」UI。
 # ==========================================================
 
 import streamlit as st
@@ -23,7 +17,7 @@ import json
 import requests
 from bs4 import BeautifulSoup
 import yfinance as yf
-from core import db_manager
+from core.repositories.strategy_repository import strategy_repo
 from core import engine_core
 from core import data_fetcher
 
@@ -42,7 +36,7 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
             st.session_state.sel_tw_val_b = "--- 請選擇 ---"
             st.session_state.sel_us_val_b = "--- 請選擇 ---"
 
-    backtest_items = db_manager.get_all_backtest_items()
+    backtest_items = strategy_repo.get_all_backtest_items()
     backtest_tickers = [item['ticker'] for item in backtest_items]
     backtest_map = {item['ticker']: item['display_name'] for item in backtest_items}
     
@@ -92,7 +86,7 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
                     stock_dict[target_sym_b] = display_name
                     save_stock_dict(stock_dict)
 
-                db_manager.add_backtest_item(target_sym_b, market=mkt)
+                strategy_repo.add_backtest_item(target_sym_b, market=mkt, display_name=display_name)
                 st.session_state.clear_input_flag_b = True
                 st.success(f"✅ {target_sym_b} 加入回測池！")
                 st.rerun()
@@ -117,7 +111,7 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
                 tickers_to_add = sectors_data.get(selected_sector, [])
                 for t in tickers_to_add:
                     mkt = "tw" if ".TW" in t else "us"
-                    db_manager.add_backtest_item(t, market=mkt)
+                    strategy_repo.add_backtest_item(t, market=mkt)
                 st.success(f"✅ 已寫入 {len(tickers_to_add)} 檔！")
                 st.rerun()
 
@@ -126,7 +120,7 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         del_sym = st.selectbox("刪除目標", ["--- 請選擇 ---"] + backtest_tickers, format_func=lambda x: backtest_map.get(x, x) if x != "--- 請選擇 ---" else x, key="del_b", label_visibility="collapsed")
         if st.button("確認刪除", use_container_width=True, key="btn_del_b"):
             if del_sym != "--- 請選擇 ---":
-                db_manager.remove_backtest_item(del_sym)
+                strategy_repo.remove_backtest_item(del_sym)
                 st.success("🗑️ 移除成功")
                 st.rerun()
 
