@@ -2,12 +2,13 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.2.5 (HTML 渲染修正版)
+# 程式版本 : ui_v1.2.5 (Phase 7: UI 渲染徹底修復版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [UI 修復] 修正 card_html 多行字串縮排問題，確保 st.markdown 能正確渲染 HTML 小卡。
-#   2. [體驗優化] 歷史資料下載完成後自動重整畫面。
-#   3. [架構對接] 完美對接 strategy_repo 與 engines.strategy。
+#   1. [顯示修復] 移除 HTML 字串的縮排，解決 Streamlit markdown 誤判為程式碼區塊的問題。
+#   2. [體驗優化] 在強制下載歷史資料完成後，加入 time.sleep 與 st.rerun()，達成自動重整渲染小卡。
+#   3. [引擎搬遷] 配合 DDD 架構重構，將策略大腦匯入路徑更改為 engines.strategy。
+#   4. [依賴解耦] 徹底拔除 core.db_manager，改用 strategy_repo 處理回測標的 CRUD。
 # ==========================================================
 
 import streamlit as st
@@ -161,6 +162,7 @@ def render_stock_card(row):
     if row['底背離'] == '✅':
         divergence_tag = "<span style='background-color:#7c3aed; color:white; padding:2px 6px; border-radius:4px; font-size:0.75rem; font-weight:bold; margin-left:8px;'>🚨 底背離</span>"
 
+    # 🔥 修正：HTML 必須靠左頂格，絕對不能有縮排，否則會被當作程式碼區塊渲染！
     card_html = f"""<div style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
 <div style="display: flex; justify-content: space-between; align-items: center;">
 <div style="font-size: 1.1rem; font-weight: 700; color: #38bdf8;">
@@ -192,15 +194,18 @@ def render_backtest_dashboard():
     st.markdown("### 🎯 策略回測戰情室 (The Research Hub)")
     
     with st.spinner("🧠 核心引擎運算中，正在掃描技術指標與背離訊號..."):
+        # 呼叫核心大腦取得算好的 DataFrame
         result_df = engine_core.run_trend_momentum_analysis()
         
     if result_df.empty:
         st.warning("⚠️ 尚無回測結果，請確認左側「回測母體」是否有新增股票，並已下載歷史資料。")
         return
         
+    # 計算及格檔數
     pass_count = len(result_df[result_df['總分'] >= 45])
     st.info(f"💡 運算完成！共分析 **{len(result_df)}** 檔標的，其中有 **{pass_count}** 檔突破 45 分強勢門檻。")
     
+    # 建立動態網格 (每排 4 欄)
     cols_per_row = 4
     for i in range(0, len(result_df), cols_per_row):
         cols = st.columns(cols_per_row)
