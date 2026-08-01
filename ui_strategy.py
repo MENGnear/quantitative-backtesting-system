@@ -2,13 +2,13 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.2.5 (Phase 7: UI 渲染徹底修復版)
+# 程式版本 : ui_v1.2.6 (Phase 7: UI 像素級對齊版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [顯示修復] 移除 HTML 字串的縮排，解決 Streamlit markdown 誤判為程式碼區塊的問題。
-#   2. [體驗優化] 在強制下載歷史資料完成後，加入 time.sleep 與 st.rerun()，達成自動重整渲染小卡。
-#   3. [引擎搬遷] 配合 DDD 架構重構，將策略大腦匯入路徑更改為 engines.strategy。
-#   4. [依賴解耦] 徹底拔除 core.db_manager，改用 strategy_repo 處理回測標的 CRUD。
+#   1. [視覺統一] 100% 移植 ui_monitor.py 的 Flexbox 動態網格與卡片 CSS (280px 寬度、陰影、字體層級)。
+#   2. [顯示修復] 移除 HTML 字串的縮排，解決 Streamlit markdown 誤判為程式碼區塊的問題。
+#   3. [體驗優化] 強制下載完成後自動重整畫面。
+#   4. [架構重構] 完全對接 engines.strategy 與 strategy_repo。
 # ==========================================================
 
 import streamlit as st
@@ -146,46 +146,46 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
 
 # ==========================================================
-# 2️⃣ 單張股票戰情小卡渲染
+# 2️⃣ 單張股票戰情小卡渲染 (HTML 生成)
 # ==========================================================
-def render_stock_card(row):
-    """渲染單張股票戰情小卡 (HTML/CSS)"""
+def render_stock_card_html(row):
+    """回傳單張股票戰情小卡的 HTML 原始碼 (與 ui_monitor 像素級對齊)"""
     total_score = row['總分']
-    # 分數顏色邏輯
+    
+    # 根據分數給予對應的底色與邊框
     if total_score >= 45:
-        score_color = "#10b981"  # 翡翠綠 (強勢)
+        bg_color = "#18241d"
+        border_color = "#1f4738"
+        score_color = "#10b981"
     elif total_score >= 30:
-        score_color = "#fbbf24"  # 琥珀黃 (及格)
+        bg_color = "#2a2110" 
+        border_color = "#4d3810"
+        score_color = "#fbbf24"
     else:
-        score_color = "#ef4444"  # 玫瑰紅 (弱勢)
+        bg_color = "#2b1819"
+        border_color = "#5a262c"
+        score_color = "#ef4444"
         
-    divergence_tag = ""
+    divergence_badge = ""
     if row['底背離'] == '✅':
-        divergence_tag = "<span style='background-color:#7c3aed; color:white; padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; margin-left: 8px; box-shadow: 0 0 8px rgba(124, 58, 237, 0.4);'>🚨 底背離</span>"
+        divergence_badge = """<div style='margin-top: 15px; background-color: #2e1065; color: #d8b4fe; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 0.95rem; border: 1px solid #9333ea; box-shadow: inset 0 0 8px rgba(0,0,0,0.5);'>🚨 發現底背離訊號</div>"""
 
-    # 🔥 升級版高質感卡片 (包含深色背景、圓角、內部間距與排版對齊)
-    card_html = f"""<div style="background-color: #1e293b; padding: 18px; border-radius: 12px; border: 1px solid #334155; display: flex; flex-direction: column; gap: 14px; height: 100%; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
-<div style="display: flex; justify-content: space-between; align-items: center;">
-<div style="font-size: 1.25rem; font-weight: 800; color: #f8fafc; letter-spacing: 0.5px;">
-{row['代碼']} <span style="font-size: 0.95rem; color: #94a3b8; font-weight: 500; margin-left: 4px;">{row['名稱']}</span>
+    display_title = f"{row['代碼']} {row['名稱']}"
+
+    # 🔥 完全移植 ui_monitor.py 的卡片 CSS，並靠左頂格防誤判
+    card_html = f"""<div style="width: 280px; min-width: 280px; background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
+<div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
+<div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600; margin-bottom: 4px;">策略總分</div>
+<div style="font-size: 2.1rem; font-weight: 800; color: {score_color}; margin-bottom: 16px;">{int(total_score)}<span style="font-size: 1.1rem; color: #64748b; font-weight: 600; margin-left: 4px;">/80</span></div>
+<div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+<div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">收盤價： <span style="color: #f8fafc; margin-left: 5px;">${row['收盤價']:.2f}</span></div>
+<div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">RSI (14)： <span style="color: #f8fafc; margin-left: 5px;">{row['RSI_14']:.1f}</span></div>
+<div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">趨勢分 (60)： <span style="color: #cbd5e1; margin-left: 5px;">{int(row['趨勢分(60)'])}</span></div>
+<div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">紅利分 (20)： <span style="color: #cbd5e1; margin-left: 5px;">{int(row['紅利分(20)'])}</span></div>
 </div>
-{divergence_tag}
-</div>
-<div style="display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #475569; padding-bottom: 12px;">
-<div style="font-size: 0.9rem; color: #cbd5e1; font-weight: 600; letter-spacing: 1px;">策略總分</div>
-<div style="font-size: 2.6rem; font-weight: 900; color: {score_color}; line-height: 1; text-shadow: 0 2px 4px rgba(0,0,0,0.2);">
-{int(total_score)}<span style="font-size: 1.1rem; color: #64748b; font-weight: 700;">/80</span>
-</div>
-</div>
-<div style="display: grid; grid-template-columns: 1fr 1fr; row-gap: 10px; font-size: 0.9rem; align-items: center;">
-<div style="color: #94a3b8; display: flex; justify-content: space-between; padding-right: 12px; border-right: 1px solid #334155;">收盤價 <span style="color: #f8fafc; font-weight: 700;">${row['收盤價']:.2f}</span></div>
-<div style="color: #94a3b8; display: flex; justify-content: space-between; padding-left: 12px;">RSI_14 <span style="color: #f8fafc; font-weight: 700;">{row['RSI_14']:.1f}</span></div>
-<div style="color: #64748b; font-size: 0.85rem; display: flex; justify-content: space-between; padding-right: 12px; border-right: 1px solid #334155;">趨勢(60) <span style="color: #cbd5e1; font-weight: 600;">{int(row['趨勢分(60)'])}</span></div>
-<div style="color: #64748b; font-size: 0.85rem; display: flex; justify-content: space-between; padding-left: 12px;">紅利(20) <span style="color: #cbd5e1; font-weight: 600;">{int(row['紅利分(20)'])}</span></div>
-</div>
+{divergence_badge}
 </div>"""
-
-    st.markdown(card_html, unsafe_allow_html=True)
+    return card_html
 
 # ==========================================================
 # 3️⃣ 頁面 B 回測戰情室主程式
@@ -195,24 +195,21 @@ def render_backtest_dashboard():
     st.markdown("### 🎯 策略回測戰情室 (The Research Hub)")
     
     with st.spinner("🧠 核心引擎運算中，正在掃描技術指標與背離訊號..."):
-        # 呼叫核心大腦取得算好的 DataFrame
         result_df = engine_core.run_trend_momentum_analysis()
         
     if result_df.empty:
         st.warning("⚠️ 尚無回測結果，請確認左側「回測母體」是否有新增股票，並已下載歷史資料。")
         return
         
-    # 計算及格檔數
     pass_count = len(result_df[result_df['總分'] >= 45])
     st.info(f"💡 運算完成！共分析 **{len(result_df)}** 檔標的，其中有 **{pass_count}** 檔突破 45 分強勢門檻。")
     
-    # 建立動態網格 (每排 4 欄)
-    cols_per_row = 4
-    for i in range(0, len(result_df), cols_per_row):
-        cols = st.columns(cols_per_row)
-        for j in range(cols_per_row):
-            if i + j < len(result_df):
-                row_data = result_df.iloc[i + j]
-                with cols[j]:
-                    with st.container(border=True):
-                        render_stock_card(row_data)
+    # 🔥 移植 ui_monitor.py 的 Flexbox 動態網格容器，取代原本死板的 st.columns
+    cards_html = "<div style='display: flex; flex-wrap: wrap; gap: 18px;'>"
+    
+    for _, row in result_df.iterrows():
+        cards_html += render_stock_card_html(row)
+        
+    cards_html += "</div>"
+    
+    st.markdown(cards_html, unsafe_allow_html=True)
