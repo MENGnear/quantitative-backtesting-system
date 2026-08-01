@@ -2,16 +2,17 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/database/postgres_adapter.py
-# 程式版本 : v1.0.0 (Phase 7: 雲端資料庫支援)
+# 程式版本 : v1.1.0 (Phase 7: 自動修復交易鎖定版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [全新建立] 實作 PostgreSQL 連線轉接器，負責與 Neon 雲端資料庫溝通。
-#   2. [相容設計] 自動將 SQLite 的佔位符 '?' 轉換為 PostgreSQL 的 '%s'，確保上層 Repository 完全免改寫。
+#   1. [穩健升級] 導入 Auto-Rollback (自癒) 機制。
+#   2. [錯誤排解] 當任何 SQL 執行失敗時，自動清除連線的錯誤狀態，徹底解決
+#      Streamlit 重新執行時發生 InFailedSqlTransaction 的「幽靈故障」。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 模組匯入與類別宣告
 #   - 2️⃣ 連線與佔位符轉換邏輯
-#   - 3️⃣ 核心資料操作 (CRUD 介面)
+#   - 3️⃣ 核心資料操作 (CRUD 介面 + 防呆自動 Rollback)
 #   - 4️⃣ 交易與連線狀態管理
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -45,39 +46,50 @@ class PostgresAdapter:
                 raise e
 
     def _convert_query(self, query):
-        """
-        [相容性核心]
-        將 SQLite 習慣的佔位符 '?' 自動轉換為 PostgreSQL 所需的 '%s'。
-        如此一來，Repository 層的 SQL 語法無需做任何修改。
-        """
+        """將 SQLite 習慣的佔位符 '?' 自動轉換為 PostgreSQL 所需的 '%s'"""
         return query.replace("?", "%s")
 
 # ==========================================================
-# 3️⃣ 核心資料操作 (CRUD 介面)
+# 3️⃣ 核心資料操作 (CRUD 介面 + 防呆自動 Rollback)
 # ==========================================================
     def execute(self, query, params=None):
         """執行非查詢類型的 SQL 指令 (INSERT, UPDATE, DELETE, CREATE)"""
         self.connect()
         converted_query = self._convert_query(query)
-        with self.conn.cursor() as cursor:
-            cursor.execute(converted_query, params or ())
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.execute(converted_query, params or ())
+        except Exception as e:
+            # 🛡️ 關鍵修復：發生錯誤立刻 Rollback 清除髒狀態，避免波及後續查詢
+            self.rollback()
+            logging.error(f"SQL 執行錯誤: {e} | 語法: {converted_query}")
+            raise e
 
     def fetch_all(self, query, params=None):
         """執行查詢並回傳所有結果，格式為 List[dict]"""
         self.connect()
         converted_query = self._convert_query(query)
-        # 使用 RealDictCursor 確保回傳格式跟 SQLite Adapter 一樣是字典形式
-        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
-            cursor.execute(converted_query, params or ())
-            return cursor.fetchall()
+        try:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute(converted_query, params or ())
+                return cursor.fetchall()
+        except Exception as e:
+            self.rollback()
+            logging.error(f"SQL 查詢錯誤 (fetch_all): {e} | 語法: {converted_query}")
+            raise e
 
     def fetch_one(self, query, params=None):
         """執行查詢並回傳單筆結果，格式為 dict"""
         self.connect()
         converted_query = self._convert_query(query)
-        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
-            cursor.execute(converted_query, params or ())
-            return cursor.fetchone()
+        try:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute(converted_query, params or ())
+                return cursor.fetchone()
+        except Exception as e:
+            self.rollback()
+            logging.error(f"SQL 查詢錯誤 (fetch_one): {e} | 語法: {converted_query}")
+            raise e
 
 # ==========================================================
 # 4️⃣ 交易與連線狀態管理
@@ -88,7 +100,7 @@ class PostgresAdapter:
             self.conn.commit()
 
     def rollback(self):
-        """回滾資料庫交易 (發生錯誤時)"""
+        """回滾資料庫交易 (清除失敗鎖定)"""
         if self.conn:
             self.conn.rollback()
 
