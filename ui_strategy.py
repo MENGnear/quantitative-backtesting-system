@@ -151,36 +151,37 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
 def render_stock_card(row):
     """渲染單張股票戰情小卡 (HTML/CSS)"""
     total_score = row['總分']
+    # 分數顏色邏輯
     if total_score >= 45:
-        score_color = "#10b981" 
+        score_color = "#10b981"  # 翡翠綠 (強勢)
     elif total_score >= 30:
-        score_color = "#fbbf24" 
+        score_color = "#fbbf24"  # 琥珀黃 (及格)
     else:
-        score_color = "#ef4444" 
+        score_color = "#ef4444"  # 玫瑰紅 (弱勢)
         
     divergence_tag = ""
     if row['底背離'] == '✅':
-        divergence_tag = "<span style='background-color:#7c3aed; color:white; padding:2px 6px; border-radius:4px; font-size:0.75rem; font-weight:bold; margin-left:8px;'>🚨 底背離</span>"
+        divergence_tag = "<span style='background-color:#7c3aed; color:white; padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; margin-left: 8px; box-shadow: 0 0 8px rgba(124, 58, 237, 0.4);'>🚨 底背離</span>"
 
-    # 🔥 修正：HTML 必須靠左頂格，絕對不能有縮排，否則會被當作程式碼區塊渲染！
-    card_html = f"""<div style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+    # 🔥 升級版高質感卡片 (包含深色背景、圓角、內部間距與排版對齊)
+    card_html = f"""<div style="background-color: #1e293b; padding: 18px; border-radius: 12px; border: 1px solid #334155; display: flex; flex-direction: column; gap: 14px; height: 100%; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
 <div style="display: flex; justify-content: space-between; align-items: center;">
-<div style="font-size: 1.1rem; font-weight: 700; color: #38bdf8;">
-{row['代碼']} <span style="font-size: 0.9rem; color: #94a3b8;">{row['名稱']}</span>
+<div style="font-size: 1.25rem; font-weight: 800; color: #f8fafc; letter-spacing: 0.5px;">
+{row['代碼']} <span style="font-size: 0.95rem; color: #94a3b8; font-weight: 500; margin-left: 4px;">{row['名稱']}</span>
 </div>
 {divergence_tag}
 </div>
-<div style="display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #334155; padding-bottom: 8px;">
-<div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600;">策略總分</div>
-<div style="font-size: 2.2rem; font-weight: 800; color: {score_color}; line-height: 1;">
-{int(total_score)}<span style="font-size: 1rem; color: #64748b; font-weight: 600;">/80</span>
+<div style="display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #475569; padding-bottom: 12px;">
+<div style="font-size: 0.9rem; color: #cbd5e1; font-weight: 600; letter-spacing: 1px;">策略總分</div>
+<div style="font-size: 2.6rem; font-weight: 900; color: {score_color}; line-height: 1; text-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+{int(total_score)}<span style="font-size: 1.1rem; color: #64748b; font-weight: 700;">/80</span>
 </div>
 </div>
-<div style="display: grid; grid-template-columns: 1fr 1fr; row-gap: 6px; font-size: 0.85rem;">
-<div style="color: #cbd5e1;">收盤價：<span style="color: #f8fafc; font-weight: 600;">${row['收盤價']:.2f}</span></div>
-<div style="color: #cbd5e1;">RSI_14：<span style="color: #f8fafc; font-weight: 600;">{row['RSI_14']:.1f}</span></div>
-<div style="color: #94a3b8; font-size: 0.8rem;">趨勢(60)：<span style="color: #cbd5e1;">{int(row['趨勢分(60)'])}</span></div>
-<div style="color: #94a3b8; font-size: 0.8rem;">紅利(20)：<span style="color: #cbd5e1;">{int(row['紅利分(20)'])}</span></div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; row-gap: 10px; font-size: 0.9rem; align-items: center;">
+<div style="color: #94a3b8; display: flex; justify-content: space-between; padding-right: 12px; border-right: 1px solid #334155;">收盤價 <span style="color: #f8fafc; font-weight: 700;">${row['收盤價']:.2f}</span></div>
+<div style="color: #94a3b8; display: flex; justify-content: space-between; padding-left: 12px;">RSI_14 <span style="color: #f8fafc; font-weight: 700;">{row['RSI_14']:.1f}</span></div>
+<div style="color: #64748b; font-size: 0.85rem; display: flex; justify-content: space-between; padding-right: 12px; border-right: 1px solid #334155;">趨勢(60) <span style="color: #cbd5e1; font-weight: 600;">{int(row['趨勢分(60)'])}</span></div>
+<div style="color: #64748b; font-size: 0.85rem; display: flex; justify-content: space-between; padding-left: 12px;">紅利(20) <span style="color: #cbd5e1; font-weight: 600;">{int(row['紅利分(20)'])}</span></div>
 </div>
 </div>"""
 
