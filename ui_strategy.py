@@ -2,12 +2,12 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.2.4 (Phase 7: 自動重整與流暢體驗版)
+# 程式版本 : ui_v1.2.5 (HTML 渲染修正版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [體驗優化] 在強制下載歷史資料完成後，加入 time.sleep 與 st.rerun()，達成自動重整渲染小卡。
-#   2. [引擎搬遷] 配合 DDD 架構重構，將策略大腦匯入路徑更改為 engines.strategy。
-#   3. [依賴解耦] 徹底拔除 core.db_manager，改用 strategy_repo 處理回測標的 CRUD。
+#   1. [UI 修復] 修正 card_html 多行字串縮排問題，確保 st.markdown 能正確渲染 HTML 小卡。
+#   2. [體驗優化] 歷史資料下載完成後自動重整畫面。
+#   3. [架構對接] 完美對接 strategy_repo 與 engines.strategy。
 # ==========================================================
 
 import streamlit as st
@@ -161,30 +161,27 @@ def render_stock_card(row):
     if row['底背離'] == '✅':
         divergence_tag = "<span style='background-color:#7c3aed; color:white; padding:2px 6px; border-radius:4px; font-size:0.75rem; font-weight:bold; margin-left:8px;'>🚨 底背離</span>"
 
-    card_html = f"""
-    <div style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div style="font-size: 1.1rem; font-weight: 700; color: #38bdf8;">
-                {row['代碼']} <span style="font-size: 0.9rem; color: #94a3b8;">{row['名稱']}</span>
-            </div>
-            {divergence_tag}
-        </div>
-        
-        <div style="display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #334155; padding-bottom: 8px;">
-            <div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600;">策略總分</div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: {score_color}; line-height: 1;">
-                {int(total_score)}<span style="font-size: 1rem; color: #64748b; font-weight: 600;">/80</span>
-            </div>
-        </div>
-        
-        <div style="display: grid; grid-template-columns: 1fr 1fr; row-gap: 6px; font-size: 0.85rem;">
-            <div style="color: #cbd5e1;">收盤價：<span style="color: #f8fafc; font-weight: 600;">${row['收盤價']:.2f}</span></div>
-            <div style="color: #cbd5e1;">RSI_14：<span style="color: #f8fafc; font-weight: 600;">{row['RSI_14']:.1f}</span></div>
-            <div style="color: #94a3b8; font-size: 0.8rem;">趨勢(60)：<span style="color: #cbd5e1;">{int(row['趨勢分(60)'])}</span></div>
-            <div style="color: #94a3b8; font-size: 0.8rem;">紅利(20)：<span style="color: #cbd5e1;">{int(row['紅利分(20)'])}</span></div>
-        </div>
-    </div>
-    """
+    card_html = f"""<div style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+<div style="display: flex; justify-content: space-between; align-items: center;">
+<div style="font-size: 1.1rem; font-weight: 700; color: #38bdf8;">
+{row['代碼']} <span style="font-size: 0.9rem; color: #94a3b8;">{row['名稱']}</span>
+</div>
+{divergence_tag}
+</div>
+<div style="display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #334155; padding-bottom: 8px;">
+<div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600;">策略總分</div>
+<div style="font-size: 2.2rem; font-weight: 800; color: {score_color}; line-height: 1;">
+{int(total_score)}<span style="font-size: 1rem; color: #64748b; font-weight: 600;">/80</span>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; row-gap: 6px; font-size: 0.85rem;">
+<div style="color: #cbd5e1;">收盤價：<span style="color: #f8fafc; font-weight: 600;">${row['收盤價']:.2f}</span></div>
+<div style="color: #cbd5e1;">RSI_14：<span style="color: #f8fafc; font-weight: 600;">{row['RSI_14']:.1f}</span></div>
+<div style="color: #94a3b8; font-size: 0.8rem;">趨勢(60)：<span style="color: #cbd5e1;">{int(row['趨勢分(60)'])}</span></div>
+<div style="color: #94a3b8; font-size: 0.8rem;">紅利(20)：<span style="color: #cbd5e1;">{int(row['紅利分(20)'])}</span></div>
+</div>
+</div>"""
+
     st.markdown(card_html, unsafe_allow_html=True)
 
 # ==========================================================
@@ -195,18 +192,15 @@ def render_backtest_dashboard():
     st.markdown("### 🎯 策略回測戰情室 (The Research Hub)")
     
     with st.spinner("🧠 核心引擎運算中，正在掃描技術指標與背離訊號..."):
-        # 呼叫核心大腦取得算好的 DataFrame
         result_df = engine_core.run_trend_momentum_analysis()
         
     if result_df.empty:
         st.warning("⚠️ 尚無回測結果，請確認左側「回測母體」是否有新增股票，並已下載歷史資料。")
         return
         
-    # 計算及格檔數
     pass_count = len(result_df[result_df['總分'] >= 45])
     st.info(f"💡 運算完成！共分析 **{len(result_df)}** 檔標的，其中有 **{pass_count}** 檔突破 45 分強勢門檻。")
     
-    # 建立動態網格 (每排 4 欄)
     cols_per_row = 4
     for i in range(0, len(result_df), cols_per_row):
         cols = st.columns(cols_per_row)
