@@ -2,12 +2,12 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/database/schema_manager.py
-# 程式版本 : v1.1.0 (Phase 7: 補齊回測資料表)
+# 程式版本 : v1.2.0 (Phase 7: 補齊 K 線資料表)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [新增結構] 加入 backtest_pool 資料表的 DDL 定義，解決 UndefinedTable 錯誤。
-#   2. [自動初始化] 統一存放所有系統所需的 DDL (CREATE TABLE) 語法。
-#   3. [相容設計] 使用 IF NOT EXISTS，確保每次連線重新整理時不會重複建表報錯。
+#   1. [新增結構] 加入 daily_price 資料表的 DDL 定義，支援雲端 K 線儲存。
+#   2. [相容防護] 針對 Date, Open 等欄位名稱加上雙引號 ("")，防止 PostgreSQL 自動轉小寫，
+#                確保與上層 Pandas DataFrame 的欄位名稱 (大小寫) 完全相容。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 模組匯入
@@ -51,6 +51,21 @@ class SchemaManager:
         );
     """
 
+    # 從 market_repository 提取的 daily_price (K線) 資料表結構
+    # 使用雙引號確保大小寫不被資料庫引擎改變，相容舊有 Pandas 邏輯
+    CREATE_DAILY_PRICE_TABLE = """
+        CREATE TABLE IF NOT EXISTS daily_price (
+            ticker VARCHAR(50),
+            "Date" VARCHAR(50),
+            "Open" REAL,
+            "High" REAL,
+            "Low" REAL,
+            "Close" REAL,
+            "Volume" REAL,
+            PRIMARY KEY (ticker, "Date")
+        );
+    """
+
 # ==========================================================
 # 3️⃣ 初始化執行邏輯
 # ==========================================================
@@ -66,6 +81,7 @@ class SchemaManager:
             # 依序執行所有建表指令
             db_adapter.execute(cls.CREATE_MONITOR_POOL_TABLE)
             db_adapter.execute(cls.CREATE_BACKTEST_POOL_TABLE)
+            db_adapter.execute(cls.CREATE_DAILY_PRICE_TABLE)
             
             # 提交交易
             db_adapter.commit()
