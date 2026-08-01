@@ -2,13 +2,13 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.2.7 (Phase 7: 卡片標題邏輯完美對齊版)
+# 程式版本 : ui_v1.2.8 (Phase 7: 市場分區完美復刻版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [顯示修復] 100% 移植 ui_monitor.py 的卡片標題過濾邏輯 (拔除 .TW、防範 NVDA NVDA 重複)。
-#   2. [視覺統一] 維持 Flexbox 動態網格與卡片 CSS (280px 寬度、陰影、字體層級)。
-#   3. [體驗優化] 強制下載完成後自動重整畫面。
-#   4. [架構重構] 完全對接 engines.strategy 與 strategy_repo。
+#   1. [排版升級] 100% 移植 ui_monitor.py 的「台股 / 美股」分區標題與上下分群邏輯。
+#   2. [顯示修復] 維持卡片標題過濾邏輯 (拔除 .TW、防範 NVDA NVDA 重複)。
+#   3. [視覺統一] 維持 Flexbox 動態網格與卡片 CSS (280px 寬度、陰影、字體層級)。
+#   4. [體驗優化] 強制下載完成後自動重整畫面。
 # ==========================================================
 
 import streamlit as st
@@ -152,7 +152,6 @@ def render_stock_card_html(row):
     """回傳單張股票戰情小卡的 HTML 原始碼 (與 ui_monitor 像素級對齊)"""
     total_score = row['總分']
     
-    # 根據分數給予對應的底色與邊框
     if total_score >= 45:
         bg_color = "#18241d"
         border_color = "#1f4738"
@@ -170,7 +169,6 @@ def render_stock_card_html(row):
     if row['底背離'] == '✅':
         divergence_badge = """<div style='margin-top: 15px; background-color: #2e1065; color: #d8b4fe; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 0.95rem; border: 1px solid #9333ea; box-shadow: inset 0 0 8px rgba(0,0,0,0.5);'>🚨 發現底背離訊號</div>"""
 
-    # 🔥 完美移植 ui_monitor.py 的名稱過濾邏輯
     ticker = row['代碼']
     clean_ticker = ticker.replace('.TW', '')
     clean_name = str(row['名稱']).strip()
@@ -197,7 +195,39 @@ def render_stock_card_html(row):
     return card_html
 
 # ==========================================================
-# 3️⃣ 頁面 B 回測戰情室主程式
+# 3️⃣ 頁面 B 市場分區渲染
+# ==========================================================
+def render_market_group_html(market_type, targets_df):
+    """根據台股/美股產生帶有標題的 HTML 區塊"""
+    if targets_df.empty:
+        return ""
+        
+    if market_type == "tw":
+        idx_name = "tw 台灣股市 (Taiwan Market)"
+        icon = "🔴"
+    else:
+        idx_name = "us 美國股市 (Nasdaq / NYSE)"
+        icon = "🟢"
+        
+    bar_color = "#3b82f6"
+    
+    # 移植 ui_monitor.py 的市場區塊標題設計
+    header_html = f"""<div style="display: flex; align-items: center; margin: 30px 0 20px 0;">
+<div style="width: 4px; height: 22px; background-color: {bar_color}; margin-right: 12px;"></div>
+<div style="font-size: 1.25rem; font-weight: 800; color: #f8fafc;">
+{icon} {idx_name}
+</div>
+</div>"""
+
+    cards_html = "<div style='display: flex; flex-wrap: wrap; gap: 18px;'>"
+    for _, row in targets_df.iterrows():
+        cards_html += render_stock_card_html(row)
+    cards_html += "</div>"
+    
+    return header_html + cards_html
+
+# ==========================================================
+# 4️⃣ 頁面 B 回測戰情室主程式
 # ==========================================================
 def render_backtest_dashboard():
     """負責頁面 B 的整體回測戰情室渲染"""
@@ -213,11 +243,18 @@ def render_backtest_dashboard():
     pass_count = len(result_df[result_df['總分'] >= 45])
     st.info(f"💡 運算完成！共分析 **{len(result_df)}** 檔標的，其中有 **{pass_count}** 檔突破 45 分強勢門檻。")
     
-    cards_html = "<div style='display: flex; flex-wrap: wrap; gap: 18px;'>"
+    # 依據 .TW 判斷台美股並分群
+    tw_df = result_df[result_df['代碼'].str.endswith('.TW')]
+    us_df = result_df[~result_df['代碼'].str.endswith('.TW')]
     
-    for _, row in result_df.iterrows():
-        cards_html += render_stock_card_html(row)
+    final_html = ""
+    
+    if not tw_df.empty:
+        final_html += render_market_group_html("tw", tw_df)
         
-    cards_html += "</div>"
-    
-    st.markdown(cards_html, unsafe_allow_html=True)
+    if not us_df.empty:
+        if not tw_df.empty:
+            final_html += "<div style='height: 10px;'></div>" # 增加兩市場間的間距
+        final_html += render_market_group_html("us", us_df)
+        
+    st.markdown(final_html, unsafe_allow_html=True)
