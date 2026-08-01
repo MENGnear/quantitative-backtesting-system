@@ -2,7 +2,7 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/repositories/market_repository.py
-# 程式版本 : repo_v1.1.0 (Phase 7: 自動建表與讀取封裝)
+# 程式版本 : repo_v1.1.1 (Phase 7: 安全寫入修復版)
 # ==========================================================
 
 import pandas as pd
@@ -54,17 +54,14 @@ class MarketRepository:
             (ticker, Date, Open, High, Low, Close, Volume) 
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """
-        self.db.connect()
-        cursor = self.db.conn.cursor()
         try:
-            cursor.executemany(query, data_records)
+            # 🔥 修正：統一透過 Adapter 標準介面逐筆寫入，避免直接調用底層出錯
+            for record in data_records:
+                self.db.execute(query, record)
             self.db.commit()
         except Exception as e:
-            self.db.rollback()
             logging.error(f"MarketRepository 寫入失敗: {e}")
             raise e
-        finally:
-            cursor.close()
 
     def get_historical_data_df(self, ticker: str) -> pd.DataFrame:
         """提取指定股票的歷史 K 線，並回傳 DataFrame"""
