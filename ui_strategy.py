@@ -2,11 +2,11 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.2.6 (Phase 7: UI 像素級對齊版)
+# 程式版本 : ui_v1.2.7 (Phase 7: 卡片標題邏輯完美對齊版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [視覺統一] 100% 移植 ui_monitor.py 的 Flexbox 動態網格與卡片 CSS (280px 寬度、陰影、字體層級)。
-#   2. [顯示修復] 移除 HTML 字串的縮排，解決 Streamlit markdown 誤判為程式碼區塊的問題。
+#   1. [顯示修復] 100% 移植 ui_monitor.py 的卡片標題過濾邏輯 (拔除 .TW、防範 NVDA NVDA 重複)。
+#   2. [視覺統一] 維持 Flexbox 動態網格與卡片 CSS (280px 寬度、陰影、字體層級)。
 #   3. [體驗優化] 強制下載完成後自動重整畫面。
 #   4. [架構重構] 完全對接 engines.strategy 與 strategy_repo。
 # ==========================================================
@@ -170,9 +170,18 @@ def render_stock_card_html(row):
     if row['底背離'] == '✅':
         divergence_badge = """<div style='margin-top: 15px; background-color: #2e1065; color: #d8b4fe; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 0.95rem; border: 1px solid #9333ea; box-shadow: inset 0 0 8px rgba(0,0,0,0.5);'>🚨 發現底背離訊號</div>"""
 
-    display_title = f"{row['代碼']} {row['名稱']}"
+    # 🔥 完美移植 ui_monitor.py 的名稱過濾邏輯
+    ticker = row['代碼']
+    clean_ticker = ticker.replace('.TW', '')
+    clean_name = str(row['名稱']).strip()
 
-    # 🔥 完全移植 ui_monitor.py 的卡片 CSS，並靠左頂格防誤判
+    if not clean_name or clean_name == ticker or clean_name == clean_ticker:
+        display_title = clean_ticker
+    elif clean_name.startswith(clean_ticker):
+        display_title = clean_name
+    else:
+        display_title = f"{clean_ticker} {clean_name}"
+
     card_html = f"""<div style="width: 280px; min-width: 280px; background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
 <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
 <div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600; margin-bottom: 4px;">策略總分</div>
@@ -204,7 +213,6 @@ def render_backtest_dashboard():
     pass_count = len(result_df[result_df['總分'] >= 45])
     st.info(f"💡 運算完成！共分析 **{len(result_df)}** 檔標的，其中有 **{pass_count}** 檔突破 45 分強勢門檻。")
     
-    # 🔥 移植 ui_monitor.py 的 Flexbox 動態網格容器，取代原本死板的 st.columns
     cards_html = "<div style='display: flex; flex-wrap: wrap; gap: 18px;'>"
     
     for _, row in result_df.iterrows():
