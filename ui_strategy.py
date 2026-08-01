@@ -2,12 +2,12 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.2.3 (Pre-Phase 7: 完整重構與引擎搬遷版)
+# 程式版本 : ui_v1.2.4 (Phase 7: 自動重整與流暢體驗版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [引擎搬遷] 配合 DDD 架構重構，將策略大腦匯入路徑更改為 engines.strategy。
-#   2. [依賴解耦] 徹底拔除 core.db_manager，改用 strategy_repo 處理回測標的 CRUD。
-#   3. [復原修復] 完整保留原版 v1.0.0 的「分數門檻高光」、「底背離標籤」與「4 欄並排動態網格」UI。
+#   1. [體驗優化] 在強制下載歷史資料完成後，加入 time.sleep 與 st.rerun()，達成自動重整渲染小卡。
+#   2. [引擎搬遷] 配合 DDD 架構重構，將策略大腦匯入路徑更改為 engines.strategy。
+#   3. [依賴解耦] 徹底拔除 core.db_manager，改用 strategy_repo 處理回測標的 CRUD。
 # ==========================================================
 
 import streamlit as st
@@ -15,10 +15,10 @@ import pandas as pd
 import os
 import json
 import requests
+import time
 from bs4 import BeautifulSoup
 import yfinance as yf
 from core.repositories.strategy_repository import strategy_repo
-# 🔥 核心升級：改由 engines 領域匯入新的策略大腦
 from engines import strategy as engine_core
 from core import data_fetcher
 
@@ -132,8 +132,12 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
             else:
                 with st.spinner('🔄 請求 K 線資料...'):
                     success = data_fetcher.smart_update_historical_data(tickers=backtest_tickers, force_5y=True)
-                    if success: st.success("✅ 更新完成！")
-                    else: st.error("⚠️ 更新失敗")
+                    if success: 
+                        st.success("✅ 更新完成！正在重整畫面...")
+                        time.sleep(1)  
+                        st.rerun()     
+                    else: 
+                        st.error("⚠️ 更新失敗")
 
     with st.container(border=True):
         sidebar_header("⏱️", "系統運行狀態")
