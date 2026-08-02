@@ -2,15 +2,15 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.10.2 (Pre-Phase 7: Step 4 - 倉儲層替換)
+# 程式版本 : ui_v1.10.3 (Phase 7: 雲端動態字典全面取代版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [架構重構] 導入 render_sidebar，承接從 QBS_app 剝離的側邊欄業務邏輯。
-#   2. [依賴解耦] 徹底拔除 core.db_manager，改用核心倉儲 monitor_repo 進行資料進出。
-#   3. [復原修復] 完整保留原版 v1.9.6 中客製化的 HTML/CSS 卡片與市場分組 (TW/US) 排版邏輯。
+#   1. [字典上雲] 匯入 market_repo，新增標的時同步寫入雲端字典，與頁面 B 共享記憶。
+#   2. [格式統一] 實作 dynamic_format_option 與 format_del_option，全面對齊「代碼 + 名稱」。
+#   3. [復原修復] 完整保留原版客製化的 HTML/CSS 卡片與市場分組排版邏輯。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 側邊欄渲染 (Micro-Frontend)
+#   - 1️⃣ 側邊欄渲染 (包含雲端字典覆寫與格式統一)
 #   - 2️⃣ 資料獲取與動態快取防護
 #   - 3️⃣ 介面渲染主程式 (維持原樣)
 #   - 4️⃣ 市場群組渲染器 (維持原樣)
@@ -28,6 +28,7 @@ import yfinance as yf
 from datetime import datetime
 from core import engine_monitor
 from core.repositories.monitor_repository import monitor_repo
+from core.repositories.market_repository import market_repo
 from services.telegram_service import send_telegram_message, build_qbs_tg_msg
 
 # ==========================================================
@@ -45,17 +46,39 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
             st.session_state.sel_tw_val = "--- 請選擇 ---"
             st.session_state.sel_us_val = "--- 請選擇 ---"
 
+    # 🔥 關鍵改造：從 Neon 資料庫載入雲端股票字典，覆寫原有的暫存參數
+    db_tw_items = market_repo.get_dict_options('tw')
+    db_us_items = market_repo.get_dict_options('us')
+    
+    # 建立雲端字典映射表供下拉選單格式化使用
+    db_dict_map = {item['ticker']: item['display_name'] for item in db_tw_items + db_us_items}
+    
+    dynamic_tw_options = ["--- 請選擇 ---"] + [item['ticker'] for item in db_tw_items]
+    dynamic_us_options = ["--- 請選擇 ---"] + [item['ticker'] for item in db_us_items]
+
+    def dynamic_format_option(ticker):
+        """通用格式化函數：統一資料庫選取下拉選單的顯示格式"""
+        if ticker == "--- 請選擇 ---":
+            return ticker
+        clean_ticker = ticker.replace('.TW', '')
+        name = str(db_dict_map.get(ticker, "")).strip()
+        if not name or name == ticker or name == clean_ticker: return clean_ticker
+        if name.startswith(clean_ticker): return name
+        return f"{clean_ticker} {name}"
+
     monitor_items = monitor_repo.get_all_monitor_items()
     monitor_tickers = [item['ticker'] for item in monitor_items]
+    monitor_map = {item['ticker']: item['display_name'] for item in monitor_items}
     
-    monitor_map = {}
-    for item in monitor_items:
-        t = item['ticker']
-        ct = t.replace('.TW', '')
-        dn = str(item['display_name']).strip()
-        if not dn or dn == t or dn == ct: monitor_map[t] = f"{ct}"
-        elif dn.startswith(ct): monitor_map[t] = f"{dn}"
-        else: monitor_map[t] = f"{ct} {dn}"
+    def format_del_option(ticker):
+        """刪除選單專用格式化函數"""
+        if ticker == "--- 請選擇 ---":
+            return ticker
+        clean_ticker = ticker.replace('.TW', '')
+        name = str(monitor_map.get(ticker, "")).strip()
+        if not name or name == ticker or name == clean_ticker: return clean_ticker
+        if name.startswith(clean_ticker): return name
+        return f"{clean_ticker} {name}"
 
     with st.container(border=True):
         sidebar_header("▶️", "執行股票監測")
@@ -82,10 +105,11 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         sidebar_header("➕", "新增即時監控")
         market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_a")
         
+        # 替換為動態雲端字典與統一的格式化函數
         if "台灣" in market_choice:
-            selected_db = st.selectbox("tw 資料庫選取", tw_options, format_func=format_tw_option, key="sel_tw_val", on_change=on_sel_change)
+            selected_db = st.selectbox("tw 資料庫選取", dynamic_tw_options, format_func=dynamic_format_option, key="sel_tw_val", on_change=on_sel_change)
         else:
-            selected_db = st.selectbox("us 資料庫選取", us_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_val", on_change=on_sel_change)
+            selected_db = st.selectbox("us 資料庫選取", dynamic_us_options, format_func=dynamic_format_option, key="sel_us_val", on_change=on_sel_change)
             
         if st.session_state.clear_input_flag:
             st.session_state.manual_sym_val = ""
@@ -127,9 +151,13 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
                         except: pass
                     
                     if is_valid:
+                        # 相容性保留：寫入舊版本地字典，避免其他未拔管模組報錯
                         if target_sym not in stock_dict or stock_dict[target_sym] != display_name:
                             stock_dict[target_sym] = display_name
                             save_stock_dict(stock_dict)
+                            
+                        # 🔥 關鍵寫入：永久寫入 Neon 雲端字典與監控母體表
+                        market_repo.upsert_dict_item(target_sym, display_name, mkt)
                         monitor_repo.add_monitor_item(target_sym, display_name=display_name, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
                         st.cache_data.clear()
                         st.session_state.clear_input_flag = True
@@ -139,7 +167,7 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
 
     with st.container(border=True):
         sidebar_header("🗑️", "移除監測標的")
-        del_sym = st.selectbox("刪除目標", ["--- 請選擇 ---"] + monitor_tickers, format_func=lambda x: monitor_map.get(x, x) if x != "--- 請選擇 ---" else x, key="del_a", label_visibility="collapsed")
+        del_sym = st.selectbox("刪除目標", ["--- 請選擇 ---"] + monitor_tickers, format_func=format_del_option, key="del_a", label_visibility="collapsed")
         if st.button("確認刪除", use_container_width=True, key="btn_del_a"):
             if del_sym != "--- 請選擇 ---":
                 monitor_repo.remove_monitor_item(del_sym)
