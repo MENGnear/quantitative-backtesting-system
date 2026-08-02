@@ -2,11 +2,19 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : engines/strategy.py
-# 程式版本 : engine_v1.4.0 (Phase 7: 支援未建檔佔位與防呆版)
+# 程式版本 : engine_v1.4.0 (Phase 7: 灰色未建檔佔位與時序鎖定版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [防呆佔位] 移除遇到空資料就直接 continue 跳過的邏輯，改為生成佔位資料 (總分 = -1)。
-#   2. [狀態標記] 讓 UI 能識別哪些標的是「未下載歷史資料」的灰色佔位卡片。
+#   1. [防呆佔位] 修正引擎邏輯，當回測池標的尚無歷史 K 線時，不再默默略過，
+#                而是回傳總分為 -1 的佔位資料，支援前端顯示灰色未建檔小卡。
+#   2. [時序鎖定] 結合 market_repo 的絕對排序，確保技術指標與背離計算穩定。
+#
+# 🏷️ 區塊說明 (Block Description):
+#   - 1️⃣ 基礎環境與倉儲對接
+#   - 2️⃣ 核心技術指標運算池 (通用兵工廠)
+#   - 3️⃣ 策略配方：趨勢動能評分系統 (Trend Momentum)
+#   - 4️⃣ 引擎主程序 (匯總、佔位處理與排序)
+# ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 import pandas as pd
@@ -111,7 +119,7 @@ def run_trend_momentum_analysis():
         
         hist_df = market_repo.get_historical_data_df(ticker)
         
-        # 🔥 修改邏輯：如果資料不足或不存在，不再直接放棄，而是給予「未建檔佔位」數值
+        # 🔥 關鍵修正：若資料不足 60 筆或為空，不再略過，而是生成「未建檔佔位資料」
         if hist_df is None or hist_df.empty or len(hist_df) < 60:
             results.append({
                 '代碼': ticker,
@@ -120,8 +128,8 @@ def run_trend_momentum_analysis():
                 'RSI_14': 0.0,
                 '底背離': '-',
                 '趨勢分(60)': 0,
-                '红利分(20)': 0,
-                '總分': -1  # 💡 關鍵標記：總分 -1 代表未建檔、等待下載
+                '紅利分(20)': 0,
+                '總分': -1  # 總分設為 -1 作為 UI 渲染灰色待命卡片的識別依據
             })
             continue
             
@@ -144,6 +152,7 @@ def run_trend_momentum_analysis():
         return pd.DataFrame()
         
     result_df = pd.DataFrame(results)
+    # 確保分數由高到低排序，未建檔的 -1 會自動排在最下方
     result_df.sort_values(by=['總分', '趨勢分(60)'], ascending=[False, False], inplace=True)
     result_df.reset_index(drop=True, inplace=True)
     
