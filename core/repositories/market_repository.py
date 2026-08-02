@@ -2,17 +2,11 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/repositories/market_repository.py
-# 程式版本 : repo_v1.3.0 (Phase 7: PostgreSQL 全小寫相容與 Pandas 映射版)
+# 程式版本 : repo_v1.3.1 (Phase 7: 絕對時序鎖定版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [架構相容] 順應 PostgreSQL，SQL 語法全面改用小寫 (date, open...)。
-#   2. [資料映射] 讀取資料後，透過 df.rename 自動將小寫欄位轉為首字母大寫 (Date, Open)，確保 UI 渲染正常。
-#
-# 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 模組與資料庫連線
-#   - 2️⃣ K 線資料讀取介面 (Query)
-#   - 3️⃣ K 線資料寫入介面 (Command)
-# ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
+#   1. [時序鎖定] 在 K 線資料載入 DataFrame 後，強制執行 df.sort_index()。
+#   2. [Bug 修復] 徹底根除因多執行緒與資料庫字串排序誤差，導致 Pandas 計算均線與 RSI 產生分數跳動的問題。
 # ==========================================================
 
 import pandas as pd
@@ -24,11 +18,7 @@ class MarketRepository:
     def __init__(self):
         self.db = ConnectionFactory.get_connection()
 
-# ==========================================================
-# 2️⃣ K 線資料讀取介面 (Query)
-# ==========================================================
     def get_last_date(self, ticker: str) -> Optional[str]:
-        # 全面改用小寫 date
         query = "SELECT MAX(date) as last_date FROM daily_price WHERE ticker = ?"
         try:
             result = self.db.fetch_one(query, (ticker,))
@@ -37,7 +27,6 @@ class MarketRepository:
             return None
 
     def get_historical_data_df(self, ticker: str) -> pd.DataFrame:
-        # 全面改用小寫欄位查詢
         query = "SELECT date, open, high, low, close, volume FROM daily_price WHERE ticker = ? ORDER BY date ASC"
         try:
             rows = self.db.fetch_all(query, (ticker,))
@@ -46,7 +35,6 @@ class MarketRepository:
                 
             df = pd.DataFrame(rows)
             
-            # 🔥 關鍵修復：將 PostgreSQL 的小寫欄位，映射回 Pandas 所需的大寫欄位
             df.rename(columns={
                 'date': 'Date',
                 'open': 'Open',
@@ -61,19 +49,19 @@ class MarketRepository:
             numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
             df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
             df.dropna(inplace=True)
+            
+            # 🔒 關鍵修復：強制時間序列定序，剝奪 SQL 排序主導權，徹底消滅分數亂跳 Bug
+            df.sort_index(ascending=True, inplace=True)
+            
             return df
         except Exception as e:
             logging.warning(f"讀取 {ticker} K 線資料失敗 (可能尚未下載或鎖定): {e}")
             return pd.DataFrame()
 
-# ==========================================================
-# 3️⃣ K 線資料寫入介面 (Command)
-# ==========================================================
     def upsert_historical_data(self, data_records: List[Tuple]) -> None:
         if not data_records:
             return
 
-        # 全面改用小寫欄位寫入
         query = """
             INSERT INTO daily_price 
             (ticker, date, open, high, low, close, volume) 
@@ -94,7 +82,4 @@ class MarketRepository:
             self.db.rollback()
             raise e
 
-# ==========================================================
-# 實例化全域單例
-# ==========================================================
 market_repo = MarketRepository()
