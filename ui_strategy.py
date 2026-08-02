@@ -2,12 +2,11 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.3.4 (Phase 7: 即時進度條與視覺停留版)
+# 程式版本 : ui_v1.3.5 (Phase 7: UI 按鈕語意優化版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [即時轉播] 移除 st.spinner，導入 st.progress 與 st.empty 實作即時進度文字。
-#   2. [視覺停留] 收到更新完成的信號後，強制 time.sleep(2) 再 rerun，解決文字閃現問題。
-#   3. [卡片變身] 延續上版，支援失敗名單的紅色警告卡片渲染。
+#   1. [語意調整] 因應底層 data_fetcher 升級為智慧跳過，將按鈕名稱改為「🔄 5 年資料」。
+#   2. [功能延續] 保留所有狀態互斥、防呆卡片與即時進度條廣播功能。
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -142,11 +141,11 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
 
     with st.container(border=True):
         sidebar_header("📥", "歷史資料管理")
-        if st.button("強制更新 5 年歷史資料", use_container_width=True):
+        # 🔥 修改按鈕名稱為「🔄 5 年資料」
+        if st.button("🔄 5 年資料", use_container_width=True):
             if not backtest_tickers: 
                 st.warning("⚠️ 回測池目前為空")
             else:
-                # 🔥 產生 UI 佔位符，傳遞給底層進行即時廣播
                 st.write("📊 **更新進度：**")
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -159,13 +158,12 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
                 )
                 st.session_state.failed_tickers_b = failed_list
                 
-                # 更新完成後的總結與視覺停留
                 if success: 
                     status_text.success("🎉 所有標的更新完成！畫面即將重整...")
                 else: 
                     status_text.error(f"⚠️ 結束作業。有 {len(failed_list)} 檔標的更新失敗。")
                     
-                time.sleep(2.0) # 刻意停留兩秒，確保使用者能看清最後的總結
+                time.sleep(2.0) 
                 st.rerun()     
 
     with st.container(border=True):
