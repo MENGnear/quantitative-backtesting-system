@@ -2,19 +2,12 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.3.0 (Phase 7: UI 狀態同步優化版)
+# 程式版本 : ui_v1.4.0 (Phase 7: 支援灰色未建檔佔位小卡版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [狀態修復] 完善 session_state 連動邏輯，確保手動輸入與下拉選單的互斥性 (單向強制覆寫)。
-#   2. [體驗優化] 新增成功後，全面重置所有輸入框與下拉選單至預設狀態 (--- 請選擇 ---)。
-#   3. [視覺統一] 維持卡片與網格的 CSS 渲染邏輯不變。
-#
-# 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 側邊欄渲染 (包含狀態連動與清空邏輯)
-#   - 2️⃣ 單張股票戰情小卡渲染 (HTML 生成)
-#   - 3️⃣ 頁面 B 市場分區渲染
-#   - 4️⃣ 頁面 B 回測戰情室主程式
-# ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
+#   1. [UI 防呆] 在 render_stock_card_html 中支援總分為 -1 的攔截邏輯。
+#   2. [視覺體驗] 新增未建檔時的「鐵灰色佔位小卡」，顯示未建檔提示，方便使用者確認與手動刪除。
+#   3. [心跳保留] 維持 1~60 分鐘設定與 UI 狀態連動。
 # ==========================================================
 
 import streamlit as st
@@ -33,24 +26,19 @@ from core import data_fetcher
 # 1️⃣ 側邊欄渲染 (Micro-Frontend)
 # ==========================================================
 def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_tw_option, sidebar_header):
-    # --- 狀態初始化 ---
     if "sel_tw_val_b" not in st.session_state: st.session_state.sel_tw_val_b = "--- 請選擇 ---"
     if "sel_us_val_b" not in st.session_state: st.session_state.sel_us_val_b = "--- 請選擇 ---"
     if "manual_sym_val_b" not in st.session_state: st.session_state.manual_sym_val_b = ""
     if "clear_input_flag_b" not in st.session_state: st.session_state.clear_input_flag_b = False
 
-    # --- 狀態連動 Callback 函數 ---
     def on_sel_change_b(): 
-        """當下拉選單改變時，清空手動輸入框"""
         st.session_state.manual_sym_val_b = ""
         
     def on_manual_change_b():
-        """當手動輸入框有內容時，強制將台美股下拉選單歸零"""
         if st.session_state.manual_sym_val_b.strip() != "":
             st.session_state.sel_tw_val_b = "--- 請選擇 ---"
             st.session_state.sel_us_val_b = "--- 請選擇 ---"
 
-    # --- 執行清空指令 (確保在元件渲染前生效) ---
     if st.session_state.clear_input_flag_b:
         st.session_state.manual_sym_val_b = ""
         st.session_state.sel_tw_val_b = "--- 請選擇 ---"
@@ -105,10 +93,9 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
 
                 strategy_repo.add_backtest_item(target_sym_b, market=mkt, display_name=display_name)
                 
-                # 🔥 觸發全面清空信號並重整畫面
                 st.session_state.clear_input_flag_b = True
                 st.success(f"✅ {target_sym_b} 加入回測池！")
-                time.sleep(0.5) # 給予視覺緩衝
+                time.sleep(0.5) 
                 st.rerun()
             else: 
                 st.warning("⚠️ 請選擇或輸入標的代碼！")
@@ -161,16 +148,41 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
 
     with st.container(border=True):
         sidebar_header("⏱️", "系統運行狀態")
-        refresh_sec_b = st.slider("刷新頻率(秒)", 5, 60, 30, key="refresh_b")
+        refresh_min_b = st.slider("刷新頻率(分)", 1, 60, 5, key="refresh_min_ui_b")
+        st.session_state.refresh_b = refresh_min_b * 60 
+        
         if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
 
 # ==========================================================
 # 2️⃣ 單張股票戰情小卡渲染 (HTML 生成)
 # ==========================================================
 def render_stock_card_html(row):
-    """回傳單張股票戰情小卡的 HTML 原始碼 (與 ui_monitor 像素級對齊)"""
+    """回傳單張股票戰情小卡的 HTML 原始碼 (支援灰色未建檔佔位防呆)"""
     total_score = row['總分']
     
+    ticker = row['代碼']
+    clean_ticker = ticker.replace('.TW', '')
+    clean_name = str(row['名稱']).strip()
+
+    if not clean_name or clean_name == ticker or clean_name == clean_ticker:
+        display_title = clean_ticker
+    elif clean_name.startswith(clean_ticker):
+        display_title = clean_name
+    else:
+        display_title = f"{clean_ticker} {clean_name}"
+
+    # 🔥 關鍵防呆：若總分為 -1，代表尚未下載歷史資料，渲染專屬的「鐵灰色未建檔佔位小卡」
+    if total_score == -1:
+        return f"""<div style="width: 280px; min-width: 280px; background-color: #1e293b; border: 1px solid #475569; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
+<div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
+<div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600; margin-bottom: 4px;">系統狀態</div>
+<div style="font-size: 1.4rem; font-weight: 800; color: #94a3b8; margin-bottom: 16px;">⏳ 未建檔</div>
+<div style="font-size: 0.85rem; color: #cbd5e1; background-color: #334155; padding: 10px; border-radius: 6px; text-align: center; margin-bottom: 8px;">
+等待下載歷史資料<br>請至左側點擊「強制更新」
+</div>
+</div>"""
+
+    # --- 正常的彩色戰情卡片邏輯 ---
     if total_score >= 45:
         bg_color = "#18241d"
         border_color = "#1f4738"
@@ -187,17 +199,6 @@ def render_stock_card_html(row):
     divergence_badge = ""
     if row['底背離'] == '✅':
         divergence_badge = """<div style='margin-top: 15px; background-color: #2e1065; color: #d8b4fe; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 0.95rem; border: 1px solid #9333ea; box-shadow: inset 0 0 8px rgba(0,0,0,0.5);'>🚨 發現底背離訊號</div>"""
-
-    ticker = row['代碼']
-    clean_ticker = ticker.replace('.TW', '')
-    clean_name = str(row['名稱']).strip()
-
-    if not clean_name or clean_name == ticker or clean_name == clean_ticker:
-        display_title = clean_ticker
-    elif clean_name.startswith(clean_ticker):
-        display_title = clean_name
-    else:
-        display_title = f"{clean_ticker} {clean_name}"
 
     card_html = f"""<div style="width: 280px; min-width: 280px; background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
 <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
@@ -217,7 +218,6 @@ def render_stock_card_html(row):
 # 3️⃣ 頁面 B 市場分區渲染
 # ==========================================================
 def render_market_group_html(market_type, targets_df):
-    """根據台股/美股產生帶有標題的 HTML 區塊"""
     if targets_df.empty:
         return ""
         
@@ -248,7 +248,6 @@ def render_market_group_html(market_type, targets_df):
 # 4️⃣ 頁面 B 回測戰情室主程式
 # ==========================================================
 def render_backtest_dashboard():
-    """負責頁面 B 的整體回測戰情室渲染"""
     st.markdown("### 🎯 策略回測戰情室 (The Research Hub)")
     
     with st.spinner("🧠 核心引擎運算中，正在掃描技術指標與背離訊號..."):
@@ -258,8 +257,9 @@ def render_backtest_dashboard():
         st.warning("⚠️ 尚無回測結果，請確認左側「回測母體」是否有新增股票，並已下載歷史資料。")
         return
         
-    pass_count = len(result_df[result_df['總分'] >= 45])
-    st.info(f"💡 運算完成！共分析 **{len(result_df)}** 檔標的，其中有 **{pass_count}** 檔突破 45 分強勢門檻。")
+    valid_df = result_df[result_df['總分'] != -1]
+    pass_count = len(valid_df[valid_df['總分'] >= 45])
+    st.info(f"💡 運算完成！共掃描 **{len(result_df)}** 檔標的 (其中已建檔 **{len(valid_df)}** 檔，未建檔 **{len(result_df) - len(valid_df)}** 檔)。")
     
     tw_df = result_df[result_df['代碼'].str.endswith('.TW')]
     us_df = result_df[~result_df['代碼'].str.endswith('.TW')]
