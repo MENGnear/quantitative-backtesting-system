@@ -2,18 +2,12 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.3.2 (Phase 7: 灰色佔位小卡與狀態同步版)
+# 程式版本 : ui_v1.3.3 (Phase 7: UI 失敗防呆與紅色警告版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [狀態修復] 完善 session_state 連動邏輯，確保手動輸入與下拉選單單向強制覆寫。
-#   2. [體驗優化] 成功新增後，全面重置所有輸入框與下拉選單。
-#   3. [防呆視覺] 支援引擎傳入的 -1 總分識別，新增未建檔灰色待命小卡渲染機制。
-#
-# 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 側邊欄渲染 (包含狀態連動與清空邏輯)
-#   - 2️⃣ 單張股票戰情小卡渲染 (支援彩色分數卡與灰色佔位卡)
-#   - 3️⃣ 頁面 B 市場分區渲染
-#   - 4️⃣ 頁面 B 回測戰情室主程式
+#   1. [狀態綁定] 新增 session_state.failed_tickers_b 來記住抓取失敗的標的。
+#   2. [API 介接] 接收 fetcher 傳回的 (success, failed_list) 進行精準 UI 提示。
+#   3. [卡片變身] 針對失敗名單內的標的，產生專屬的「🔴 抓取失敗」紅色警告卡片。
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -30,13 +24,16 @@ from engines import strategy as engine_core
 from core import data_fetcher
 
 # ==========================================================
-# 1️⃣ 側邊欄渲染 (Micro-Frontend)
+# 1️⃣ 側邊欄渲染
 # ==========================================================
 def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_tw_option, sidebar_header):
     if "sel_tw_val_b" not in st.session_state: st.session_state.sel_tw_val_b = "--- 請選擇 ---"
     if "sel_us_val_b" not in st.session_state: st.session_state.sel_us_val_b = "--- 請選擇 ---"
     if "manual_sym_val_b" not in st.session_state: st.session_state.manual_sym_val_b = ""
     if "clear_input_flag_b" not in st.session_state: st.session_state.clear_input_flag_b = False
+    
+    # 紀錄抓取失敗的標的
+    if "failed_tickers_b" not in st.session_state: st.session_state.failed_tickers_b = []
 
     def on_sel_change_b(): 
         st.session_state.manual_sym_val_b = ""
@@ -100,6 +97,10 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
 
                 strategy_repo.add_backtest_item(target_sym_b, market=mkt, display_name=display_name)
                 
+                # 新增標的時，若它原本在失敗名單內，將其移除以恢復灰色狀態
+                if target_sym_b in st.session_state.failed_tickers_b:
+                    st.session_state.failed_tickers_b.remove(target_sym_b)
+                    
                 st.session_state.clear_input_flag_b = True
                 st.success(f"✅ {target_sym_b} 加入回測池！")
                 time.sleep(0.5) 
@@ -127,6 +128,8 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
                 for t in tickers_to_add:
                     mkt = "tw" if ".TW" in t else "us"
                     strategy_repo.add_backtest_item(t, market=mkt)
+                    if t in st.session_state.failed_tickers_b:
+                        st.session_state.failed_tickers_b.remove(t)
                 st.success(f"✅ 已寫入 {len(tickers_to_add)} 檔！")
                 st.rerun()
 
@@ -144,25 +147,31 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         if st.button("強制更新 5 年歷史資料", use_container_width=True):
             if not backtest_tickers: st.warning("⚠️ 回測池目前為空")
             else:
-                with st.spinner('🔄 請求 K 線資料...'):
-                    success = data_fetcher.smart_update_historical_data(tickers=backtest_tickers, force_5y=True)
+                with st.spinner('🔄 請求 K 線資料... (若遇擁塞將自動排隊 30 秒)'):
+                    # 🔥 接收 (成功狀態, 失敗清單)
+                    success, failed_list = data_fetcher.smart_update_historical_data(tickers=backtest_tickers, force_5y=True)
+                    st.session_state.failed_tickers_b = failed_list # 寫入狀態
+                    
                     if success: 
                         st.success("✅ 更新完成！正在重整畫面...")
-                        time.sleep(1)  
-                        st.rerun()     
                     else: 
-                        st.error("⚠️ 更新失敗")
+                        st.error(f"⚠️ 部分標的更新失敗 ({len(failed_list)} 檔)")
+                        
+                    time.sleep(1)  
+                    st.rerun()     
 
     with st.container(border=True):
         sidebar_header("⏱️", "系統運行狀態")
-        refresh_sec_b = st.slider("刷新頻率(秒)", 5, 60, 30, key="refresh_b")
+        refresh_min_b = st.slider("刷新頻率(分)", 1, 60, 5, key="refresh_min_ui_b")
+        st.session_state.refresh_b = refresh_min_b * 60 
+        
         if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_b"): st.rerun()
 
 # ==========================================================
 # 2️⃣ 單張股票戰情小卡渲染 (HTML 生成)
 # ==========================================================
-def render_stock_card_html(row):
-    """回傳單張股票戰情小卡的 HTML 原始碼 (支援未建檔灰色佔位卡)"""
+def render_stock_card_html(row, failed_tickers):
+    """回傳單張股票戰情小卡的 HTML 原始碼 (支援彩色/灰色/紅色失敗卡)"""
     ticker = row['代碼']
     clean_ticker = ticker.replace('.TW', '')
     clean_name = str(row['名稱']).strip()
@@ -176,13 +185,22 @@ def render_stock_card_html(row):
 
     total_score = row['總分']
 
-    # 🔥 關鍵判斷：若總分為 -1，代表尚未下載歷史資料，渲染專屬的灰色待命卡片
+    # 檢查是否為尚未下載資料的狀態 (-1)
     if total_score == -1:
-        card_html = f"""<div style="width: 280px; min-width: 280px; background-color: #1e293b; border: 1px solid #475569; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
+        # 🔥 檢查該標的是否被記錄在「抓取失敗清單」中
+        if ticker in failed_tickers:
+            card_html = f"""<div style="width: 280px; min-width: 280px; background-color: #2b1819; border: 1px solid #7f1d1d; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
 <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
 <div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600; margin-bottom: 4px;">目前狀態</div>
-<div style="font-size: 1.3rem; font-weight: 700; color: #fbbf24; margin-bottom: 20px;">⏳ 未建檔 (等待歷史資料)</div>
-<div style="font-size: 0.85rem; color: #64748b; font-style: italic; border-top: 1px solid #334155; padding-top: 10px;">請至左側點擊「強制更新 5 年歷史資料」</div>
+<div style="font-size: 1.25rem; font-weight: 700; color: #ef4444; margin-bottom: 20px;">🔴 資料抓取失敗</div>
+<div style="font-size: 0.85rem; color: #94a3b8; font-style: italic; border-top: 1px solid #450a0a; padding-top: 10px;">請稍後重試，或確認代碼無誤</div>
+</div>"""
+        else:
+            card_html = f"""<div style="width: 280px; min-width: 280px; background-color: #1e293b; border: 1px solid #475569; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
+<div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
+<div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600; margin-bottom: 4px;">目前狀態</div>
+<div style="font-size: 1.3rem; font-weight: 700; color: #fbbf24; margin-bottom: 20px;">⏳ 未建檔 (等待資料)</div>
+<div style="font-size: 0.85rem; color: #64748b; font-style: italic; border-top: 1px solid #334155; padding-top: 10px;">請點擊左側「強制更新」按鈕</div>
 </div>"""
         return card_html
 
@@ -221,8 +239,7 @@ def render_stock_card_html(row):
 # ==========================================================
 # 3️⃣ 頁面 B 市場分區渲染
 # ==========================================================
-def render_market_group_html(market_type, targets_df):
-    """根據台股/美股產生帶有標題的 HTML 區塊"""
+def render_market_group_html(market_type, targets_df, failed_tickers):
     if targets_df.empty:
         return ""
         
@@ -244,7 +261,7 @@ def render_market_group_html(market_type, targets_df):
 
     cards_html = "<div style='display: flex; flex-wrap: wrap; gap: 18px;'>"
     for _, row in targets_df.iterrows():
-        cards_html += render_stock_card_html(row)
+        cards_html += render_stock_card_html(row, failed_tickers)
     cards_html += "</div>"
     
     return header_html + cards_html
@@ -253,8 +270,10 @@ def render_market_group_html(market_type, targets_df):
 # 4️⃣ 頁面 B 回測戰情室主程式
 # ==========================================================
 def render_backtest_dashboard():
-    """負責頁面 B 的整體回測戰情室渲染"""
     st.markdown("### 🎯 策略回測戰情室 (The Research Hub)")
+    
+    # 讀取失敗清單
+    failed_tickers = st.session_state.get("failed_tickers_b", [])
     
     with st.spinner("🧠 核心引擎運算中，正在掃描技術指標與背離訊號..."):
         result_df = engine_core.run_trend_momentum_analysis()
@@ -263,13 +282,18 @@ def render_backtest_dashboard():
         st.warning("⚠️ 尚無回測結果，請確認左側「回測母體」是否有新增股票，並已下載歷史資料。")
         return
         
-    # 計算已通過門檻與未建檔的數量
     pass_count = len(result_df[result_df['總分'] >= 45])
     unbuilt_count = len(result_df[result_df['總分'] == -1])
+    failed_count = len([t for t in failed_tickers if t in result_df['代碼'].values])
     
     info_msg = f"💡 運算完成！共分析 **{len(result_df)}** 檔標的，其中有 **{pass_count}** 檔突破 45 分強勢門檻。"
     if unbuilt_count > 0:
-        info_msg += f" (目前有 **{unbuilt_count}** 檔標的等待下載歷史資料)"
+        waiting_count = unbuilt_count - failed_count
+        if waiting_count > 0:
+            info_msg += f" (目前有 **{waiting_count}** 檔標的等待下載歷史資料)"
+        if failed_count > 0:
+            info_msg += f" (⚠️ 有 **{failed_count}** 檔標的資料抓取失敗)"
+            
     st.info(info_msg)
     
     tw_df = result_df[result_df['代碼'].str.endswith('.TW')]
@@ -278,11 +302,11 @@ def render_backtest_dashboard():
     final_html = ""
     
     if not tw_df.empty:
-        final_html += render_market_group_html("tw", tw_df)
+        final_html += render_market_group_html("tw", tw_df, failed_tickers)
         
     if not us_df.empty:
         if not tw_df.empty:
             final_html += "<div style='height: 10px;'></div>" 
-        final_html += render_market_group_html("us", us_df)
+        final_html += render_market_group_html("us", us_df, failed_tickers)
         
     st.markdown(final_html, unsafe_allow_html=True)
