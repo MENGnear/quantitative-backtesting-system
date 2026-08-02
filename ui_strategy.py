@@ -2,12 +2,12 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.3.3 (Phase 7: UI 失敗防呆與紅色警告版)
+# 程式版本 : ui_v1.3.4 (Phase 7: 即時進度條與視覺停留版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [狀態綁定] 新增 session_state.failed_tickers_b 來記住抓取失敗的標的。
-#   2. [API 介接] 接收 fetcher 傳回的 (success, failed_list) 進行精準 UI 提示。
-#   3. [卡片變身] 針對失敗名單內的標的，產生專屬的「🔴 抓取失敗」紅色警告卡片。
+#   1. [即時轉播] 移除 st.spinner，導入 st.progress 與 st.empty 實作即時進度文字。
+#   2. [視覺停留] 收到更新完成的信號後，強制 time.sleep(2) 再 rerun，解決文字閃現問題。
+#   3. [卡片變身] 延續上版，支援失敗名單的紅色警告卡片渲染。
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -32,7 +32,6 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
     if "manual_sym_val_b" not in st.session_state: st.session_state.manual_sym_val_b = ""
     if "clear_input_flag_b" not in st.session_state: st.session_state.clear_input_flag_b = False
     
-    # 紀錄抓取失敗的標的
     if "failed_tickers_b" not in st.session_state: st.session_state.failed_tickers_b = []
 
     def on_sel_change_b(): 
@@ -97,7 +96,6 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
 
                 strategy_repo.add_backtest_item(target_sym_b, market=mkt, display_name=display_name)
                 
-                # 新增標的時，若它原本在失敗名單內，將其移除以恢復灰色狀態
                 if target_sym_b in st.session_state.failed_tickers_b:
                     st.session_state.failed_tickers_b.remove(target_sym_b)
                     
@@ -145,20 +143,30 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
     with st.container(border=True):
         sidebar_header("📥", "歷史資料管理")
         if st.button("強制更新 5 年歷史資料", use_container_width=True):
-            if not backtest_tickers: st.warning("⚠️ 回測池目前為空")
+            if not backtest_tickers: 
+                st.warning("⚠️ 回測池目前為空")
             else:
-                with st.spinner('🔄 請求 K 線資料... (若遇擁塞將自動排隊 30 秒)'):
-                    # 🔥 接收 (成功狀態, 失敗清單)
-                    success, failed_list = data_fetcher.smart_update_historical_data(tickers=backtest_tickers, force_5y=True)
-                    st.session_state.failed_tickers_b = failed_list # 寫入狀態
+                # 🔥 產生 UI 佔位符，傳遞給底層進行即時廣播
+                st.write("📊 **更新進度：**")
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                success, failed_list = data_fetcher.smart_update_historical_data(
+                    tickers=backtest_tickers, 
+                    force_5y=True,
+                    progress_bar=progress_bar,
+                    status_text=status_text
+                )
+                st.session_state.failed_tickers_b = failed_list
+                
+                # 更新完成後的總結與視覺停留
+                if success: 
+                    status_text.success("🎉 所有標的更新完成！畫面即將重整...")
+                else: 
+                    status_text.error(f"⚠️ 結束作業。有 {len(failed_list)} 檔標的更新失敗。")
                     
-                    if success: 
-                        st.success("✅ 更新完成！正在重整畫面...")
-                    else: 
-                        st.error(f"⚠️ 部分標的更新失敗 ({len(failed_list)} 檔)")
-                        
-                    time.sleep(1)  
-                    st.rerun()     
+                time.sleep(2.0) # 刻意停留兩秒，確保使用者能看清最後的總結
+                st.rerun()     
 
     with st.container(border=True):
         sidebar_header("⏱️", "系統運行狀態")
@@ -171,7 +179,6 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
 # 2️⃣ 單張股票戰情小卡渲染 (HTML 生成)
 # ==========================================================
 def render_stock_card_html(row, failed_tickers):
-    """回傳單張股票戰情小卡的 HTML 原始碼 (支援彩色/灰色/紅色失敗卡)"""
     ticker = row['代碼']
     clean_ticker = ticker.replace('.TW', '')
     clean_name = str(row['名稱']).strip()
@@ -185,9 +192,7 @@ def render_stock_card_html(row, failed_tickers):
 
     total_score = row['總分']
 
-    # 檢查是否為尚未下載資料的狀態 (-1)
     if total_score == -1:
-        # 🔥 檢查該標的是否被記錄在「抓取失敗清單」中
         if ticker in failed_tickers:
             card_html = f"""<div style="width: 280px; min-width: 280px; background-color: #2b1819; border: 1px solid #7f1d1d; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
 <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
@@ -204,7 +209,6 @@ def render_stock_card_html(row, failed_tickers):
 </div>"""
         return card_html
 
-    # --- 原有的彩色分數卡渲染邏輯 ---
     if total_score >= 45:
         bg_color = "#18241d"
         border_color = "#1f4738"
@@ -272,7 +276,6 @@ def render_market_group_html(market_type, targets_df, failed_tickers):
 def render_backtest_dashboard():
     st.markdown("### 🎯 策略回測戰情室 (The Research Hub)")
     
-    # 讀取失敗清單
     failed_tickers = st.session_state.get("failed_tickers_b", [])
     
     with st.spinner("🧠 核心引擎運算中，正在掃描技術指標與背離訊號..."):
