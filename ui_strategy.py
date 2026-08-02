@@ -2,18 +2,12 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.3.6 (Phase 7: 下拉選單顯示格式統一版)
+# 程式版本 : ui_v1.3.7 (Phase 7: 雲端動態字典全面取代版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [UI 對齊] 修正「移除回測標的」下拉選單格式，捨棄 lambda，改用 format_del_option。
-#   2. [防呆組裝] 確保顯示格式必定為「乾淨代碼 + 名稱」(例如：2330 台積電)，與頁面 A 100% 統一。
-#   3. [功能延續] 保留所有狀態同步、智慧抓取跳過、灰色/紅色防呆戰情卡片功能。
-#
-# 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 側邊欄渲染 (包含狀態連動、格式化函數與清空邏輯)
-#   - 2️⃣ 單張股票戰情小卡渲染 (支援彩色/灰色/紅色失敗卡)
-#   - 3️⃣ 頁面 B 市場分區渲染
-#   - 4️⃣ 頁面 B 回測戰情室主程式
+#   1. [字典上雲] 拋棄傳入的本地 JSON 參數，改從 Neon 資料庫動態載入選單項目。
+#   2. [格式統一] 實作 dynamic_format_option，讓資料庫選取與刪除選單全面對齊「代碼 + 名稱」。
+#   3. [永久儲存] 新增標的時同步寫入雲端字典，徹底解決 Streamlit 重開資料消失問題。
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -28,9 +22,10 @@ import yfinance as yf
 from core.repositories.strategy_repository import strategy_repo
 from engines import strategy as engine_core
 from core import data_fetcher
+from core.repositories.market_repository import market_repo
 
 # ==========================================================
-# 1️⃣ 側邊欄渲染
+# 1️⃣ 側邊欄渲染 (包含雲端字典覆寫機制)
 # ==========================================================
 def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_tw_option, sidebar_header):
     if "sel_tw_val_b" not in st.session_state: st.session_state.sel_tw_val_b = "--- 請選擇 ---"
@@ -54,23 +49,39 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         st.session_state.sel_us_val_b = "--- 請選擇 ---"
         st.session_state.clear_input_flag_b = False
 
+    # 🔥 關鍵改造：從 Neon 資料庫載入雲端股票字典，覆寫原有的暫存參數
+    db_tw_items = market_repo.get_dict_options('tw')
+    db_us_items = market_repo.get_dict_options('us')
+    
+    # 建立雲端字典映射表供下拉選單格式化使用
+    db_dict_map = {item['ticker']: item['display_name'] for item in db_tw_items + db_us_items}
+    
+    dynamic_tw_options = ["--- 請選擇 ---"] + [item['ticker'] for item in db_tw_items]
+    dynamic_us_options = ["--- 請選擇 ---"] + [item['ticker'] for item in db_us_items]
+
+    def dynamic_format_option(ticker):
+        """通用格式化函數：統一資料庫選取下拉選單的顯示格式"""
+        if ticker == "--- 請選擇 ---":
+            return ticker
+        clean_ticker = ticker.replace('.TW', '')
+        name = str(db_dict_map.get(ticker, "")).strip()
+        if not name or name == ticker or name == clean_ticker: return clean_ticker
+        if name.startswith(clean_ticker): return name
+        return f"{clean_ticker} {name}"
+
     backtest_items = strategy_repo.get_all_backtest_items()
     backtest_tickers = [item['ticker'] for item in backtest_items]
     backtest_map = {item['ticker']: item['display_name'] for item in backtest_items}
     
-    # 🔥 專屬格式化函數：確保下拉選單顯示「2330 台積電」格式
     def format_del_option(ticker):
+        """刪除選單專用格式化函數"""
         if ticker == "--- 請選擇 ---":
             return ticker
         clean_ticker = ticker.replace('.TW', '')
         name = str(backtest_map.get(ticker, "")).strip()
-        
-        if not name or name == ticker or name == clean_ticker:
-            return clean_ticker
-        elif name.startswith(clean_ticker):
-            return name
-        else:
-            return f"{clean_ticker} {name}"
+        if not name or name == ticker or name == clean_ticker: return clean_ticker
+        if name.startswith(clean_ticker): return name
+        return f"{clean_ticker} {name}"
     
     with st.container(border=True):
         sidebar_header("🧪", "回測策略設定")
@@ -80,10 +91,11 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         sidebar_header("➕", "新增回測標的")
         market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_b")
         
+        # 替換為動態雲端字典與統一的格式化函數
         if "台灣" in market_choice:
-            selected_db_b = st.selectbox("tw 資料庫選取", tw_options, format_func=format_tw_option, key="sel_tw_val_b", on_change=on_sel_change_b)
+            selected_db_b = st.selectbox("tw 資料庫選取", dynamic_tw_options, format_func=dynamic_format_option, key="sel_tw_val_b", on_change=on_sel_change_b)
         else:
-            selected_db_b = st.selectbox("us 資料庫選取", us_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_val_b", on_change=on_sel_change_b)
+            selected_db_b = st.selectbox("us 資料庫選取", dynamic_us_options, format_func=dynamic_format_option, key="sel_us_val_b", on_change=on_sel_change_b)
             
         new_sym_b = st.text_input("或 手動輸入代碼", placeholder="例: AAPL 或 2330", key="manual_sym_val_b", on_change=on_manual_change_b).strip().upper()
         
@@ -110,17 +122,20 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
                             if fi.last_price is not None: display_name = target_sym_b
                     except: pass
 
+                # 相容性保留：寫入舊版本地字典，避免其他依賴模組報錯
                 if target_sym_b not in stock_dict or stock_dict[target_sym_b] != display_name:
                     stock_dict[target_sym_b] = display_name
                     save_stock_dict(stock_dict)
 
+                # 🔥 關鍵寫入：永久寫入 Neon 雲端字典與回測母體表
+                market_repo.upsert_dict_item(target_sym_b, display_name, mkt)
                 strategy_repo.add_backtest_item(target_sym_b, market=mkt, display_name=display_name)
                 
                 if target_sym_b in st.session_state.failed_tickers_b:
                     st.session_state.failed_tickers_b.remove(target_sym_b)
                     
                 st.session_state.clear_input_flag_b = True
-                st.success(f"✅ {target_sym_b} 加入回測池！")
+                st.success(f"✅ {target_sym_b} 加入回測池並永久建檔！")
                 time.sleep(0.5) 
                 st.rerun()
             else: 
@@ -153,7 +168,6 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
 
     with st.container(border=True):
         sidebar_header("🗑️", "移除回測標的")
-        # 🔥 修改 format_func，套用全新的一致化格式函數
         del_sym = st.selectbox(
             "刪除目標", 
             ["--- 請選擇 ---"] + backtest_tickers, 
