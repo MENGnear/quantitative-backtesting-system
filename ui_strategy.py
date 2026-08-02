@@ -2,11 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.3.5 (Phase 7: UI 按鈕語意優化版)
+# 程式版本 : ui_v1.3.6 (Phase 7: 下拉選單顯示格式統一版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [語意調整] 因應底層 data_fetcher 升級為智慧跳過，將按鈕名稱改為「🔄 5 年資料」。
-#   2. [功能延續] 保留所有狀態互斥、防呆卡片與即時進度條廣播功能。
+#   1. [UI 對齊] 修正「移除回測標的」下拉選單格式，捨棄 lambda，改用 format_del_option。
+#   2. [防呆組裝] 確保顯示格式必定為「乾淨代碼 + 名稱」(例如：2330 台積電)，與頁面 A 100% 統一。
+#   3. [功能延續] 保留所有狀態同步、智慧抓取跳過、灰色/紅色防呆戰情卡片功能。
+#
+# 🏷️ 區塊說明 (Block Description):
+#   - 1️⃣ 側邊欄渲染 (包含狀態連動、格式化函數與清空邏輯)
+#   - 2️⃣ 單張股票戰情小卡渲染 (支援彩色/灰色/紅色失敗卡)
+#   - 3️⃣ 頁面 B 市場分區渲染
+#   - 4️⃣ 頁面 B 回測戰情室主程式
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -50,6 +57,20 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
     backtest_items = strategy_repo.get_all_backtest_items()
     backtest_tickers = [item['ticker'] for item in backtest_items]
     backtest_map = {item['ticker']: item['display_name'] for item in backtest_items}
+    
+    # 🔥 專屬格式化函數：確保下拉選單顯示「2330 台積電」格式
+    def format_del_option(ticker):
+        if ticker == "--- 請選擇 ---":
+            return ticker
+        clean_ticker = ticker.replace('.TW', '')
+        name = str(backtest_map.get(ticker, "")).strip()
+        
+        if not name or name == ticker or name == clean_ticker:
+            return clean_ticker
+        elif name.startswith(clean_ticker):
+            return name
+        else:
+            return f"{clean_ticker} {name}"
     
     with st.container(border=True):
         sidebar_header("🧪", "回測策略設定")
@@ -132,7 +153,14 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
 
     with st.container(border=True):
         sidebar_header("🗑️", "移除回測標的")
-        del_sym = st.selectbox("刪除目標", ["--- 請選擇 ---"] + backtest_tickers, format_func=lambda x: backtest_map.get(x, x) if x != "--- 請選擇 ---" else x, key="del_b", label_visibility="collapsed")
+        # 🔥 修改 format_func，套用全新的一致化格式函數
+        del_sym = st.selectbox(
+            "刪除目標", 
+            ["--- 請選擇 ---"] + backtest_tickers, 
+            format_func=format_del_option, 
+            key="del_b", 
+            label_visibility="collapsed"
+        )
         if st.button("確認刪除", use_container_width=True, key="btn_del_b"):
             if del_sym != "--- 請選擇 ---":
                 strategy_repo.remove_backtest_item(del_sym)
@@ -141,7 +169,6 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
 
     with st.container(border=True):
         sidebar_header("📥", "歷史資料管理")
-        # 🔥 修改按鈕名稱為「🔄 5 年資料」
         if st.button("🔄 5 年資料", use_container_width=True):
             if not backtest_tickers: 
                 st.warning("⚠️ 回測池目前為空")
