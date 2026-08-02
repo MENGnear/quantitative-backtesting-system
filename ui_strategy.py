@@ -2,13 +2,19 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_strategy.py
-# 程式版本 : ui_v1.2.8 (Phase 7: 市場分區完美復刻版)
+# 程式版本 : ui_v1.3.0 (Phase 7: UI 狀態同步優化版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [排版升級] 100% 移植 ui_monitor.py 的「台股 / 美股」分區標題與上下分群邏輯。
-#   2. [顯示修復] 維持卡片標題過濾邏輯 (拔除 .TW、防範 NVDA NVDA 重複)。
-#   3. [視覺統一] 維持 Flexbox 動態網格與卡片 CSS (280px 寬度、陰影、字體層級)。
-#   4. [體驗優化] 強制下載完成後自動重整畫面。
+#   1. [狀態修復] 完善 session_state 連動邏輯，確保手動輸入與下拉選單的互斥性 (單向強制覆寫)。
+#   2. [體驗優化] 新增成功後，全面重置所有輸入框與下拉選單至預設狀態 (--- 請選擇 ---)。
+#   3. [視覺統一] 維持卡片與網格的 CSS 渲染邏輯不變。
+#
+# 🏷️ 區塊說明 (Block Description):
+#   - 1️⃣ 側邊欄渲染 (包含狀態連動與清空邏輯)
+#   - 2️⃣ 單張股票戰情小卡渲染 (HTML 生成)
+#   - 3️⃣ 頁面 B 市場分區渲染
+#   - 4️⃣ 頁面 B 回測戰情室主程式
+# ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 import streamlit as st
@@ -27,16 +33,29 @@ from core import data_fetcher
 # 1️⃣ 側邊欄渲染 (Micro-Frontend)
 # ==========================================================
 def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_tw_option, sidebar_header):
+    # --- 狀態初始化 ---
     if "sel_tw_val_b" not in st.session_state: st.session_state.sel_tw_val_b = "--- 請選擇 ---"
     if "sel_us_val_b" not in st.session_state: st.session_state.sel_us_val_b = "--- 請選擇 ---"
     if "manual_sym_val_b" not in st.session_state: st.session_state.manual_sym_val_b = ""
     if "clear_input_flag_b" not in st.session_state: st.session_state.clear_input_flag_b = False
 
-    def on_sel_change_b(): st.session_state.manual_sym_val_b = ""
+    # --- 狀態連動 Callback 函數 ---
+    def on_sel_change_b(): 
+        """當下拉選單改變時，清空手動輸入框"""
+        st.session_state.manual_sym_val_b = ""
+        
     def on_manual_change_b():
+        """當手動輸入框有內容時，強制將台美股下拉選單歸零"""
         if st.session_state.manual_sym_val_b.strip() != "":
             st.session_state.sel_tw_val_b = "--- 請選擇 ---"
             st.session_state.sel_us_val_b = "--- 請選擇 ---"
+
+    # --- 執行清空指令 (確保在元件渲染前生效) ---
+    if st.session_state.clear_input_flag_b:
+        st.session_state.manual_sym_val_b = ""
+        st.session_state.sel_tw_val_b = "--- 請選擇 ---"
+        st.session_state.sel_us_val_b = "--- 請選擇 ---"
+        st.session_state.clear_input_flag_b = False
 
     backtest_items = strategy_repo.get_all_backtest_items()
     backtest_tickers = [item['ticker'] for item in backtest_items]
@@ -55,10 +74,6 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         else:
             selected_db_b = st.selectbox("us 資料庫選取", us_options, format_func=lambda x: stock_dict.get(x, x) if x != "--- 請選擇 ---" else x, key="sel_us_val_b", on_change=on_sel_change_b)
             
-        if st.session_state.clear_input_flag_b:
-            st.session_state.manual_sym_val_b = ""
-            st.session_state.clear_input_flag_b = False
-
         new_sym_b = st.text_input("或 手動輸入代碼", placeholder="例: AAPL 或 2330", key="manual_sym_val_b", on_change=on_manual_change_b).strip().upper()
         
         if st.button("確認新增", use_container_width=True, key="btn_add_b"):
@@ -89,10 +104,14 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
                     save_stock_dict(stock_dict)
 
                 strategy_repo.add_backtest_item(target_sym_b, market=mkt, display_name=display_name)
+                
+                # 🔥 觸發全面清空信號並重整畫面
                 st.session_state.clear_input_flag_b = True
                 st.success(f"✅ {target_sym_b} 加入回測池！")
+                time.sleep(0.5) # 給予視覺緩衝
                 st.rerun()
-            else: st.warning("⚠️ 請選擇或輸入標的代碼！")
+            else: 
+                st.warning("⚠️ 請選擇或輸入標的代碼！")
                 
     with st.container(border=True):
         sidebar_header("🗂️", "族群批次輸入")
@@ -211,7 +230,6 @@ def render_market_group_html(market_type, targets_df):
         
     bar_color = "#3b82f6"
     
-    # 移植 ui_monitor.py 的市場區塊標題設計
     header_html = f"""<div style="display: flex; align-items: center; margin: 30px 0 20px 0;">
 <div style="width: 4px; height: 22px; background-color: {bar_color}; margin-right: 12px;"></div>
 <div style="font-size: 1.25rem; font-weight: 800; color: #f8fafc;">
@@ -243,7 +261,6 @@ def render_backtest_dashboard():
     pass_count = len(result_df[result_df['總分'] >= 45])
     st.info(f"💡 運算完成！共分析 **{len(result_df)}** 檔標的，其中有 **{pass_count}** 檔突破 45 分強勢門檻。")
     
-    # 依據 .TW 判斷台美股並分群
     tw_df = result_df[result_df['代碼'].str.endswith('.TW')]
     us_df = result_df[~result_df['代碼'].str.endswith('.TW')]
     
@@ -254,7 +271,7 @@ def render_backtest_dashboard():
         
     if not us_df.empty:
         if not tw_df.empty:
-            final_html += "<div style='height: 10px;'></div>" # 增加兩市場間的間距
+            final_html += "<div style='height: 10px;'></div>" 
         final_html += render_market_group_html("us", us_df)
         
     st.markdown(final_html, unsafe_allow_html=True)
