@@ -2,7 +2,11 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : engines/strategy.py
-# 程式版本 : engine_v1.3.0 (Phase 7: 徹底去資料庫依賴版)
+# 程式版本 : engine_v1.4.0 (Phase 7: 支援未建檔佔位與防呆版)
+#
+# 📋 進版說明 (Version Notes):
+#   1. [防呆佔位] 移除遇到空資料就直接 continue 跳過的邏輯，改為生成佔位資料 (總分 = -1)。
+#   2. [狀態標記] 讓 UI 能識別哪些標的是「未下載歷史資料」的灰色佔位卡片。
 # ==========================================================
 
 import pandas as pd
@@ -105,9 +109,20 @@ def run_trend_momentum_analysis():
         ticker = row['ticker']
         name = row['display_name']
         
-        # 🔥 改由 market_repo 獲取資料，並具備 try-except 防呆
         hist_df = market_repo.get_historical_data_df(ticker)
+        
+        # 🔥 修改邏輯：如果資料不足或不存在，不再直接放棄，而是給予「未建檔佔位」數值
         if hist_df is None or hist_df.empty or len(hist_df) < 60:
+            results.append({
+                '代碼': ticker,
+                '名稱': name,
+                '收盤價': 0.0,
+                'RSI_14': 0.0,
+                '底背離': '-',
+                '趨勢分(60)': 0,
+                '红利分(20)': 0,
+                '總分': -1  # 💡 關鍵標記：總分 -1 代表未建檔、等待下載
+            })
             continue
             
         hist_df = compute_indicators(hist_df)
