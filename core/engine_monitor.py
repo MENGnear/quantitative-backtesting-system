@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.8.1 (Phase 7: 盤中狀態精準識別版)
+# 程式版本 : monitor_v1.8.2 (Phase 7: 大盤滾動暴衝偵測版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [狀態精準化] 新增開盤時間緩衝窗 (5分鐘)，區分「正常開盤」與「盤中啟動/重啟」，解決誤報開盤問題。
-#   2. [報價防護] 完整繼承 V1.8.0 的三層降級報價邏輯 (info -> fast_info -> history)。
-#   3. [時區感知] 美東夏冬令自動切換與三階段過濾管線維持穩定運作。
+#   1. [暴衝偵測] 成功導入 MON_app 的 5 分鐘滾動視窗機制，精準捕捉大盤短線劇烈波動。
+#   2. [防禦洗版] 針對暴衝警報加入獨立的 300 秒 (5分鐘) 冷卻鎖，確保警報高價值且不干擾。
+#   3. [狀態精準化] 完整保留 v1.8.1 的開盤緩衝窗與 v1.8.0 的三層報價防護機制。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 基礎環境與狀態記憶體初始化
+#   - 1️⃣ 基礎環境與狀態記憶體初始化 (🔥 新增滾動視窗記憶體)
 #   - 2️⃣ 高頻報價與資料解析模組 (三層防護機制)
 #   - 3️⃣ 警報觸發與冷卻邏輯
-#   - 4️⃣ 引擎主程序 (🔥 階段一導入盤中智慧判定)
+#   - 4️⃣ 引擎主程序 (🔥 階段二導入大盤暴衝偵測)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -34,6 +34,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # ==========================================================
 _ALERT_HISTORY = {}
 _MARKET_STATE = {'TW': 'CLOSED', 'US': 'CLOSED'}
+
+# 🔥 大盤 5 分鐘滾動視窗專用記憶體
+_INDEX_HISTORY = {'TW': [], 'US': []}
+_INDEX_LAST_VOL_ALERT = {'TW': None, 'US': None}
 
 def get_monitor_targets():
     """
@@ -176,7 +180,7 @@ def evaluate_alerts(row, quote, tz_now):
 # 4️⃣ 引擎主程序 (🔥 三階段過濾管線)
 # ==========================================================
 def run_radar_scan(is_monitoring=False):
-    global _MARKET_STATE
+    global _MARKET_STATE, _INDEX_HISTORY, _INDEX_LAST_VOL_ALERT
     targets_df = get_monitor_targets()
     
     # 建立精確的時區時間 (US/Eastern 自動處理夏/冬令切換)
@@ -220,27 +224,83 @@ def run_radar_scan(is_monitoring=False):
                 else:
                     send_telegram_message("🎯US | 🟢盤中")
 
-    # 🌟 階段二：常規報價與警報擷取
+    # 🌟 階段二：常規報價與警報擷取 (加入大盤滾動暴衝偵測)
     if is_monitoring:
         if process_tw:
-            idx_interval_id = f"IDX_TW_{now_tpe.strftime('%Y%m%d_%H')}_{(now_tpe.minute // 15) * 15:02d}"
-            if _ALERT_HISTORY.get('INDEX_TW') != idx_interval_id:
-                idx_quotes = fetch_realtime_quotes(['^TWII'])
-                if '^TWII' in idx_quotes:
-                    q = idx_quotes['^TWII']
-                    msg = build_qbs_tg_msg("TW", q['current'], q['change_pct'], is_manual=False)
+            idx_quotes = fetch_realtime_quotes(['^TWII'])
+            if '^TWII' in idx_quotes:
+                q = idx_quotes['^TWII']
+                curr_price = q['current']
+                
+                # 1) 15 分鐘常規大盤廣播
+                idx_interval_id = f"IDX_TW_{now_tpe.strftime('%Y%m%d_%H')}_{(now_tpe.minute // 15) * 15:02d}"
+                if _ALERT_HISTORY.get('INDEX_TW') != idx_interval_id:
+                    msg = build_qbs_tg_msg("TW", curr_price, q['change_pct'], is_manual=False)
                     send_telegram_message(msg)
                     _ALERT_HISTORY['INDEX_TW'] = idx_interval_id
+                
+                # 2) 5 分鐘滾動視窗暴衝偵測
+                history = _INDEX_HISTORY['TW']
+                history.append((now_tpe, curr_price))
+                cutoff = now_tpe - datetime.timedelta(minutes=5)
+                history = [(t, p) for t, p in history if t >= cutoff]
+                _INDEX_HISTORY['TW'] = history
+                
+                if len(history) > 1:
+                    oldest_t, oldest_p = history[0]
+                    time_diff_sec = (now_tpe - oldest_t).total_seconds()
                     
+                    if time_diff_sec >= 240: 
+                        vol_pct = (curr_price - oldest_p) / oldest_p * 100
+                        vol_diff = curr_price - oldest_p
+                        
+                        if abs(vol_pct) >= 5.0: 
+                            last_alert = _INDEX_LAST_VOL_ALERT.get('TW')
+                            if last_alert is None or (now_tpe - last_alert).total_seconds() >= 300:
+                                vol_sign = "+" if vol_pct > 0 else ""
+                                vol_arrow = "↑" if vol_pct > 0 else "↓"
+                                time_str = now_tpe.strftime('%H:%M')
+                                msg = f"🕒{time_str} | 🎯TW MktIdx | 🔥暴衝 | {'📈' if vol_pct > 0 else '📉'}{vol_sign}{vol_diff:,.2f} ({vol_arrow}{abs(vol_pct):.2f}%)"
+                                send_telegram_message(msg)
+                                _INDEX_LAST_VOL_ALERT['TW'] = now_tpe
+                                
         if process_us:
-            idx_interval_id = f"IDX_US_{now_us.strftime('%Y%m%d_%H')}_{(now_us.minute // 15) * 15:02d}"
-            if _ALERT_HISTORY.get('INDEX_US') != idx_interval_id:
-                idx_quotes = fetch_realtime_quotes(['^IXIC'])
-                if '^IXIC' in idx_quotes:
-                    q = idx_quotes['^IXIC']
-                    msg = build_qbs_tg_msg("US", q['current'], q['change_pct'], is_manual=False)
+            idx_quotes = fetch_realtime_quotes(['^IXIC'])
+            if '^IXIC' in idx_quotes:
+                q = idx_quotes['^IXIC']
+                curr_price = q['current']
+                
+                # 1) 15 分鐘常規大盤廣播
+                idx_interval_id = f"IDX_US_{now_us.strftime('%Y%m%d_%H')}_{(now_us.minute // 15) * 15:02d}"
+                if _ALERT_HISTORY.get('INDEX_US') != idx_interval_id:
+                    msg = build_qbs_tg_msg("US", curr_price, q['change_pct'], is_manual=False)
                     send_telegram_message(msg)
                     _ALERT_HISTORY['INDEX_US'] = idx_interval_id
+                    
+                # 2) 5 分鐘滾動視窗暴衝偵測
+                history = _INDEX_HISTORY['US']
+                history.append((now_us, curr_price))
+                cutoff = now_us - datetime.timedelta(minutes=5)
+                history = [(t, p) for t, p in history if t >= cutoff]
+                _INDEX_HISTORY['US'] = history
+                
+                if len(history) > 1:
+                    oldest_t, oldest_p = history[0]
+                    time_diff_sec = (now_us - oldest_t).total_seconds()
+                    
+                    if time_diff_sec >= 240: 
+                        vol_pct = (curr_price - oldest_p) / oldest_p * 100
+                        vol_diff = curr_price - oldest_p
+                        
+                        if abs(vol_pct) >= 5.0: 
+                            last_alert = _INDEX_LAST_VOL_ALERT.get('US')
+                            if last_alert is None or (now_us - last_alert).total_seconds() >= 300:
+                                vol_sign = "+" if vol_pct > 0 else ""
+                                vol_arrow = "↑" if vol_pct > 0 else "↓"
+                                time_str = now_us.strftime('%H:%M')
+                                msg = f"🕒{time_str} | 🎯US MktIdx | 🔥暴衝 | {'📈' if vol_pct > 0 else '📉'}{vol_sign}{vol_diff:,.2f} ({vol_arrow}{abs(vol_pct):.2f}%)"
+                                send_telegram_message(msg)
+                                _INDEX_LAST_VOL_ALERT['US'] = now_us
 
     # 為了維持 UI 全時段顯示，依然抓取所有目標的報價
     if targets_df.empty:
