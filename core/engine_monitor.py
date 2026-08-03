@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.7.0 (Pre-Phase 7: Step 4 - 倉儲層對接)
+# 程式版本 : monitor_v1.8.0 (Phase 7: 高可用報價防護版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [架構升級] 徹底拔除 sqlite3 與硬編碼 DB 路徑，改由 monitor_repo 統一管理資料進出。
-#   2. [核心保留] 完整保留 v1.4.0 的 is_monitoring 閘門與三階段過濾管線。
-#   3. [時區感知] 完整保留美東夏冬令自動切換與開收盤通知機制。
+#   1. [報價防護] 移植 V3.1.0 的三層降級報價邏輯 (info -> fast_info -> history)，取代 yf.download。
+#   2. [防禦封鎖] 避免批量下載觸發 Yahoo 429 限制，解決警報系統「靜默失效」問題。
+#   3. [記錄追蹤] 移除了掩蓋錯誤的 except: pass，加入 logging 警示，精準掌握連線狀態。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 基礎環境與狀態記憶體初始化 (🔥 替換為 Repository)
-#   - 2️⃣ 高頻報價與資料解析模組
+#   - 1️⃣ 基礎環境與狀態記憶體初始化
+#   - 2️⃣ 高頻報價與資料解析模組 (🔥 導入三層防護機制)
 #   - 3️⃣ 警報觸發與冷卻邏輯
-#   - 4️⃣ 引擎主程序 (🔥 三階段過濾管線)
+#   - 4️⃣ 引擎主程序 (三階段過濾管線)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -23,6 +23,7 @@ import datetime
 import pytz
 import os
 import logging
+import numpy as np
 from services.telegram_service import send_telegram_message, build_qbs_tg_msg
 from core.repositories.monitor_repository import monitor_repo
 
@@ -32,7 +33,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # 1️⃣ 基礎環境與狀態記憶體初始化
 # ==========================================================
 _ALERT_HISTORY = {}
-# 🔥 市場作息狀態記憶體
 _MARKET_STATE = {'TW': 'CLOSED', 'US': 'CLOSED'}
 
 def get_monitor_targets():
@@ -43,57 +43,76 @@ def get_monitor_targets():
     return monitor_repo.get_monitor_targets_df()
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組
+# 2️⃣ 高頻報價與資料解析模組 (🔥 導入三層防護機制)
 # ==========================================================
+def get_realtime_price(ticker):
+    """
+    單檔股票三層降級報價防護：
+    Tier 1: info API
+    Tier 2: fast_info API
+    Tier 3: history API (K線回推)
+    """
+    c_price, p_close, o_price = None, None, None
+    try:
+        ticker_obj = yf.Ticker(ticker)
+        
+        # Tier 1: 嘗試使用常規 info
+        try:
+            info = ticker_obj.info
+            c_price = info.get('currentPrice', info.get('regularMarketPrice'))
+            p_close = info.get('previousClose', info.get('regularMarketPreviousClose'))
+            o_price = info.get('open', info.get('regularMarketOpen'))
+        except Exception: 
+            pass
+            
+        # Tier 2: 嘗試使用輕量化 fast_info
+        if c_price is None or p_close is None:
+            try:
+                c_price = float(ticker_obj.fast_info['last_price'])
+                p_close = float(ticker_obj.fast_info['previous_close'])
+                o_price = float(ticker_obj.fast_info.get('open', c_price))
+            except Exception: 
+                pass
+                
+        # Tier 3: 最終底線 - 解析歷史 5 日 K 線
+        if c_price is None or p_close is None:
+            try:
+                df = ticker_obj.history(period="5d", auto_adjust=False).dropna(subset=["Open", "Close"])
+                if not df.empty and len(df) >= 2:
+                    c_price = float(df['Close'].iloc[-1])
+                    p_close = float(df['Close'].iloc[-2])
+                    o_price = float(df['Open'].iloc[-1])
+            except Exception: 
+                pass
+                
+        return c_price, p_close, o_price
+    except Exception as e:
+        logging.error(f"[{ticker}] 報價引擎徹底失效: {e}")
+        return None, None, None
+
 def fetch_realtime_quotes(tickers):
+    """逐檔抓取，取代原本容易被 Ban 的 yf.download 批量下載"""
     quotes = {}
     if not tickers:
         return quotes
         
-    tw_tickers = [t for t in tickers if '.TW' in t or t == '^TWII']
-    us_tickers = [t for t in tickers if '.TW' not in t and t != '^TWII']
-    
-    def process_download(group_tickers):
-        if not group_tickers: return
-        try:
-            data = yf.download(group_tickers, period="5d", progress=False, threads=True)
-            if data.empty: return
-            is_multi = isinstance(data.columns, pd.MultiIndex)
+    for ticker in tickers:
+        c_price, p_close, o_price = get_realtime_price(ticker)
+        
+        if c_price is not None and p_close is not None:
+            change_amt = c_price - p_close
+            change_pct = (change_amt / p_close * 100) if p_close > 0 else 0.0
             
-            for ticker in group_tickers:
-                try:
-                    if is_multi:
-                        if 'Close' in data and ticker in data['Close']:
-                            close_series = data['Close'][ticker].dropna()
-                            open_series = data['Open'][ticker].dropna()
-                        else: continue
-                    else:
-                        close_series = data['Close'].dropna()
-                        open_series = data['Open'].dropna()
-
-                    if len(close_series) >= 2:
-                        curr = float(close_series.iloc[-1])
-                        prev = float(close_series.iloc[-2])
-                        open_p = float(open_series.iloc[-1])
-                        
-                        change_amt = curr - prev
-                        change_pct = (change_amt / prev * 100) if prev > 0 else 0.0
-                        
-                        quotes[ticker] = {
-                            'current': round(curr, 2),
-                            'prev': round(prev, 2),
-                            'open': round(open_p, 2),
-                            'change_amt': round(change_amt, 2),
-                            'change_pct': round(change_pct, 2)
-                        }
-                except Exception as inner_e:
-                    pass
-        except Exception as e:
-            pass
-
-    process_download(tw_tickers)
-    process_download(us_tickers)
-    
+            quotes[ticker] = {
+                'current': round(c_price, 2),
+                'prev': round(p_close, 2),
+                'open': round(o_price if o_price is not None else c_price, 2),
+                'change_amt': round(change_amt, 2),
+                'change_pct': round(change_pct, 2)
+            }
+        else:
+            logging.warning(f"⚠️ [{ticker}] 三層防護皆無法獲取報價，略過本次更新。")
+            
     return quotes
 
 def parse_custom_values(val_str):
@@ -193,8 +212,7 @@ def run_radar_scan(is_monitoring=False):
                 _MARKET_STATE['US'] = 'OPEN'
                 send_telegram_message("🎯US | 🟢開盤")
 
-    # 🌟 階段二：常規報價與警報擷取 (先處理最後一筆資料)
-    # 大盤 15 分鐘常規廣播
+    # 🌟 階段二：常規報價與警報擷取
     if is_monitoring:
         if process_tw:
             idx_interval_id = f"IDX_TW_{now_tpe.strftime('%Y%m%d_%H')}_{(now_tpe.minute // 15) * 15:02d}"
@@ -234,7 +252,7 @@ def run_radar_scan(is_monitoring=False):
                     triggered = evaluate_alerts(row, quotes[row['ticker']], now_tpe)
                     all_triggered_alerts.extend(triggered)
 
-    # 🌟 階段三：收盤判定與物理關門 (強制在最後一筆資料處理後執行)
+    # 🌟 階段三：收盤判定與物理關門
     if is_monitoring:
         if now_tpe_time >= tw_close_trigger and _MARKET_STATE.get('TW') == 'OPEN':
             _MARKET_STATE['TW'] = 'CLOSED'
