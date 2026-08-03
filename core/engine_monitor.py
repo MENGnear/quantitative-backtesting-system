@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.8.0 (Phase 7: 高可用報價防護版)
+# 程式版本 : monitor_v1.8.1 (Phase 7: 盤中狀態精準識別版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [報價防護] 移植 V3.1.0 的三層降級報價邏輯 (info -> fast_info -> history)，取代 yf.download。
-#   2. [防禦封鎖] 避免批量下載觸發 Yahoo 429 限制，解決警報系統「靜默失效」問題。
-#   3. [記錄追蹤] 移除了掩蓋錯誤的 except: pass，加入 logging 警示，精準掌握連線狀態。
+#   1. [狀態精準化] 新增開盤時間緩衝窗 (5分鐘)，區分「正常開盤」與「盤中啟動/重啟」，解決誤報開盤問題。
+#   2. [報價防護] 完整繼承 V1.8.0 的三層降級報價邏輯 (info -> fast_info -> history)。
+#   3. [時區感知] 美東夏冬令自動切換與三階段過濾管線維持穩定運作。
 #
 # 🏷️ 區塊說明 (Block Description):
 #   - 1️⃣ 基礎環境與狀態記憶體初始化
-#   - 2️⃣ 高頻報價與資料解析模組 (🔥 導入三層防護機制)
+#   - 2️⃣ 高頻報價與資料解析模組 (三層防護機制)
 #   - 3️⃣ 警報觸發與冷卻邏輯
-#   - 4️⃣ 引擎主程序 (三階段過濾管線)
+#   - 4️⃣ 引擎主程序 (🔥 階段一導入盤中智慧判定)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -43,7 +43,7 @@ def get_monitor_targets():
     return monitor_repo.get_monitor_targets_df()
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組 (🔥 導入三層防護機制)
+# 2️⃣ 高頻報價與資料解析模組 (三層防護機制)
 # ==========================================================
 def get_realtime_price(ticker):
     """
@@ -186,31 +186,39 @@ def run_radar_scan(is_monitoring=False):
     now_tpe_time = now_tpe.time()
     now_us_time = now_us.time()
     
-    # 定義精確的開關盤節點
+    # 定義精確的開關盤節點與智慧緩衝時間窗 (5分鐘)
     tw_open = datetime.time(9, 0)
+    tw_open_buffer = datetime.time(9, 5)
     tw_close_trigger = datetime.time(13, 30)
-    tw_close_process = datetime.time(13, 30, 59) # 容許 13:30 當分鐘的最後一筆資料處理
+    tw_close_process = datetime.time(13, 30, 59)
     
     us_open = datetime.time(9, 30)
+    us_open_buffer = datetime.time(9, 35)
     us_close_trigger = datetime.time(16, 0)
     us_close_process = datetime.time(16, 0, 59)
     
     process_tw = False
     process_us = False
 
-    # 🌟 階段一：開盤判定與狀態更新
+    # 🌟 階段一：開盤判定與狀態更新 (加入盤中判定)
     if is_monitoring:
         if tw_open <= now_tpe_time <= tw_close_process:
             process_tw = True
             if now_tpe_time < tw_close_trigger and _MARKET_STATE.get('TW') != 'OPEN':
                 _MARKET_STATE['TW'] = 'OPEN'
-                send_telegram_message("🎯TW | 🟢開盤")
+                if now_tpe_time <= tw_open_buffer:
+                    send_telegram_message("🎯TW | 🟢開盤")
+                else:
+                    send_telegram_message("🎯TW | 🟢盤中")
                 
         if us_open <= now_us_time <= us_close_process:
             process_us = True
             if now_us_time < us_close_trigger and _MARKET_STATE.get('US') != 'OPEN':
                 _MARKET_STATE['US'] = 'OPEN'
-                send_telegram_message("🎯US | 🟢開盤")
+                if now_us_time <= us_open_buffer:
+                    send_telegram_message("🎯US | 🟢開盤")
+                else:
+                    send_telegram_message("🎯US | 🟢盤中")
 
     # 🌟 階段二：常規報價與警報擷取
     if is_monitoring:
