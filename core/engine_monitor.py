@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.8.2 (Phase 7: 大盤滾動暴衝偵測版)
+# 程式版本 : monitor_v1.9.0 (Phase 7: 開盤防呆與淨化濾網版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [暴衝偵測] 成功導入 MON_app 的 5 分鐘滾動視窗機制，精準捕捉大盤短線劇烈波動。
-#   2. [防禦洗版] 針對暴衝警報加入獨立的 300 秒 (5分鐘) 冷卻鎖，確保警報高價值且不干擾。
-#   3. [狀態精準化] 完整保留 v1.8.1 的開盤緩衝窗與 v1.8.0 的三層報價防護機制。
+#   1. [資料淨化] 新增時間戳日期驗證 (is_today)，拒絕拿昨天的歷史 K 線當作今日報價，解決開盤假報價轟炸。
+#   2. [試撮過濾] 新增 09:00~09:02 開盤零成交量 (Volume <= 0) 濾網，阻擋未正式開盤的試撮假突破。
+#   3. [架構繼承] 完整保留大盤 5 分鐘滾動暴衝偵測、三層降級報價防護，與狀態緩衝判定。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 基礎環境與狀態記憶體初始化 (🔥 新增滾動視窗記憶體)
-#   - 2️⃣ 高頻報價與資料解析模組 (三層防護機制)
+#   - 1️⃣ 基礎環境與狀態記憶體初始化
+#   - 2️⃣ 高頻報價與資料解析模組 (🔥 新增日期與成交量防呆濾網)
 #   - 3️⃣ 警報觸發與冷卻邏輯
-#   - 4️⃣ 引擎主程序 (🔥 階段二導入大盤暴衝偵測)
+#   - 4️⃣ 引擎主程序
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -35,7 +35,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 _ALERT_HISTORY = {}
 _MARKET_STATE = {'TW': 'CLOSED', 'US': 'CLOSED'}
 
-# 🔥 大盤 5 分鐘滾動視窗專用記憶體
+# 大盤 5 分鐘滾動視窗專用記憶體
 _INDEX_HISTORY = {'TW': [], 'US': []}
 _INDEX_LAST_VOL_ALERT = {'TW': None, 'US': None}
 
@@ -47,16 +47,19 @@ def get_monitor_targets():
     return monitor_repo.get_monitor_targets_df()
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組 (三層防護機制)
+# 2️⃣ 高頻報價與資料解析模組 (🔥 新增日期與成交量防呆濾網)
 # ==========================================================
-def get_realtime_price(ticker):
+def get_realtime_price(ticker, market_now):
     """
-    單檔股票三層降級報價防護：
+    單檔股票三層降級報價防護 (含日期與成交量驗證)：
     Tier 1: info API
     Tier 2: fast_info API
     Tier 3: history API (K線回推)
     """
     c_price, p_close, o_price = None, None, None
+    vol = 0
+    is_today = True # 預設為 True，若明確抓到舊資料則改為 False
+    
     try:
         ticker_obj = yf.Ticker(ticker)
         
@@ -66,6 +69,7 @@ def get_realtime_price(ticker):
             c_price = info.get('currentPrice', info.get('regularMarketPrice'))
             p_close = info.get('previousClose', info.get('regularMarketPreviousClose'))
             o_price = info.get('open', info.get('regularMarketOpen'))
+            vol = info.get('regularMarketVolume', info.get('volume', 0))
         except Exception: 
             pass
             
@@ -75,6 +79,7 @@ def get_realtime_price(ticker):
                 c_price = float(ticker_obj.fast_info['last_price'])
                 p_close = float(ticker_obj.fast_info['previous_close'])
                 o_price = float(ticker_obj.fast_info.get('open', c_price))
+                vol = float(ticker_obj.fast_info.get('last_volume', 0))
             except Exception: 
                 pass
                 
@@ -86,24 +91,45 @@ def get_realtime_price(ticker):
                     c_price = float(df['Close'].iloc[-1])
                     p_close = float(df['Close'].iloc[-2])
                     o_price = float(df['Open'].iloc[-1])
+                    vol = float(df['Volume'].iloc[-1])
+                    
+                    # 嚴格驗證 Tier 3 的資料日期
+                    last_date = df.index[-1].date()
+                    if last_date < market_now.date():
+                        is_today = False # 確定抓到昨天的舊資料
             except Exception: 
                 pass
                 
-        return c_price, p_close, o_price
+        return c_price, p_close, o_price, vol, is_today
     except Exception as e:
         logging.error(f"[{ticker}] 報價引擎徹底失效: {e}")
-        return None, None, None
+        return None, None, None, 0, False
 
 def fetch_realtime_quotes(tickers):
-    """逐檔抓取，取代原本容易被 Ban 的 yf.download 批量下載"""
+    """逐檔抓取，並導入幽靈報價與試撮虛價雙重濾網"""
     quotes = {}
     if not tickers:
         return quotes
         
     for ticker in tickers:
-        c_price, p_close, o_price = get_realtime_price(ticker)
+        is_tw = '.TW' in ticker or ticker == '^TWII'
+        market_tz = pytz.timezone('Asia/Taipei') if is_tw else pytz.timezone('US/Eastern')
+        market_now = datetime.datetime.now(market_tz)
+        
+        c_price, p_close, o_price, vol, is_today = get_realtime_price(ticker, market_now)
         
         if c_price is not None and p_close is not None:
+            # 🛡️ 濾網 1：昨天舊資料攔截 (解決 09:00 卡頓轟炸)
+            if not is_today and market_now.time() >= datetime.time(9, 0):
+                logging.info(f"⏳ [{ticker}] 尚無今日即時報價，攔截幽靈舊資料。")
+                continue
+                
+            # 🛡️ 濾網 2：試撮與零成交濾網 (09:00 ~ 09:02)
+            if datetime.time(9, 0) <= market_now.time() <= datetime.time(9, 2):
+                if vol <= 0:
+                    logging.info(f"⏳ [{ticker}] 開盤試撮階段無成交量，攔截虛價。")
+                    continue
+                    
             change_amt = c_price - p_close
             change_pct = (change_amt / p_close * 100) if p_close > 0 else 0.0
             
@@ -177,7 +203,7 @@ def evaluate_alerts(row, quote, tz_now):
     return alerts
 
 # ==========================================================
-# 4️⃣ 引擎主程序 (🔥 三階段過濾管線)
+# 4️⃣ 引擎主程序
 # ==========================================================
 def run_radar_scan(is_monitoring=False):
     global _MARKET_STATE, _INDEX_HISTORY, _INDEX_LAST_VOL_ALERT
