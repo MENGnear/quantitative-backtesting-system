@@ -2,275 +2,389 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_monitor_v2.0.0 (Phase 7: 防呆與雙層刪除版)
+# 程式版本 : ui_v1.10.3 (Phase 7: 雲端動態字典全面取代版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [防呆驗證] 新增「嚴格入庫防呆機制」，輸入股號時強制進行 1d K線驗證，擋下無效/下市股票。
-#   2. [雙層刪除] 重構移除區塊為「停止監測」與「徹底刪除字典股號」雙軌制，保持雲端資料庫潔癖。
-#   3. [狀態聯動] 暫停按鈕正式聯動後端引擎 (engine_monitor)，清空快取避免盤中重啟時發生延遲。
-#   4. [UI 解耦] 刷新頻率 Slider 的 Key 與記憶體變數解耦，解決跨頁面失憶問題。
+#   1. [字典上雲] 匯入 market_repo，新增標的時同步寫入雲端字典，與頁面 B 共享記憶。
+#   2. [格式統一] 實作 dynamic_format_option 與 format_del_option，全面對齊「代碼 + 名稱」。
+#   3. [復原修復] 完整保留原版客製化的 HTML/CSS 卡片與市場分組排版邏輯。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 工具函式 (名稱解析與字串處理)
-#   - 2️⃣ 側邊欄渲染 (包含防呆新增、雙層刪除、頻率設定)
-#   - 3️⃣ 監控主畫面渲染 (戰情卡片矩陣)
+#   - 1️⃣ 側邊欄渲染 (包含雲端字典覆寫與格式統一)
+#   - 2️⃣ 資料獲取與動態快取防護
+#   - 3️⃣ 介面渲染主程式 (維持原樣)
+#   - 4️⃣ 市場群組渲染器 (維持原樣)
+#   - 5️⃣ 系統工具組與推播測試元件
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
 import streamlit as st
 import pandas as pd
-import yfinance as yf
-import datetime
+import textwrap
 import pytz
-import re
 import requests
+from bs4 import BeautifulSoup
+import yfinance as yf
+from datetime import datetime
 from core import engine_monitor
 from core.repositories.monitor_repository import monitor_repo
-from services.telegram_service import send_telegram_message
+from core.repositories.market_repository import market_repo
+from services.telegram_service import send_telegram_message, build_qbs_tg_msg
 
 # ==========================================================
-# 1️⃣ 工具函式 (名稱解析與字串處理)
-# ==========================================================
-def get_smart_display_name(sym, stock_dict, save_stock_dict):
-    """智慧獲取台股中文名稱，若無則爬取 Yahoo 網頁並快取"""
-    if sym in stock_dict:
-        return stock_dict[sym].replace(".TW", "")
-    
-    display_name = sym
-    if ".TW" in sym.upper():
-        code = sym.upper().replace(".TW", "")
-        try:
-            res = requests.get(f"https://tw.stock.yahoo.com/quote/{code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
-            match = re.search(r'<title>(.*?)\(', res.text)
-            if match:
-                chinese_name = match.group(1).strip()
-                display_name = f"{code} {chinese_name}"
-            else:
-                display_name = code
-        except:
-            display_name = code
-            
-    stock_dict[sym] = display_name
-    save_stock_dict(stock_dict)
-    return display_name.replace(".TW", "")
-
-# ==========================================================
-# 2️⃣ 側邊欄渲染 (Micro-Frontend Hook)
+# 1️⃣ 側邊欄渲染 (Micro-Frontend)
 # ==========================================================
 def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_tw_option, sidebar_header):
-    sidebar_header("⚙️", "雷達監測控制面板")
+    if "sel_tw_val" not in st.session_state: st.session_state.sel_tw_val = "--- 請選擇 ---"
+    if "sel_us_val" not in st.session_state: st.session_state.sel_us_val = "--- 請選擇 ---"
+    if "manual_sym_val" not in st.session_state: st.session_state.manual_sym_val = ""
+    if "clear_input_flag" not in st.session_state: st.session_state.clear_input_flag = False
 
-    # --------------------------------------------------------
-    # ▶️ 執行股票監測 (🔥 包含狀態重置聯動)
-    # --------------------------------------------------------
+    def on_sel_change(): st.session_state.manual_sym_val = ""
+    def on_manual_change():
+        if st.session_state.manual_sym_val.strip() != "":
+            st.session_state.sel_tw_val = "--- 請選擇 ---"
+            st.session_state.sel_us_val = "--- 請選擇 ---"
+
+    # 🔥 關鍵改造：從 Neon 資料庫載入雲端股票字典，覆寫原有的暫存參數
+    db_tw_items = market_repo.get_dict_options('tw')
+    db_us_items = market_repo.get_dict_options('us')
+    
+    # 建立雲端字典映射表供下拉選單格式化使用
+    db_dict_map = {item['ticker']: item['display_name'] for item in db_tw_items + db_us_items}
+    
+    dynamic_tw_options = ["--- 請選擇 ---"] + [item['ticker'] for item in db_tw_items]
+    dynamic_us_options = ["--- 請選擇 ---"] + [item['ticker'] for item in db_us_items]
+
+    def dynamic_format_option(ticker):
+        """通用格式化函數：統一資料庫選取下拉選單的顯示格式"""
+        if ticker == "--- 請選擇 ---":
+            return ticker
+        clean_ticker = ticker.replace('.TW', '')
+        name = str(db_dict_map.get(ticker, "")).strip()
+        if not name or name == ticker or name == clean_ticker: return clean_ticker
+        if name.startswith(clean_ticker): return name
+        return f"{clean_ticker} {name}"
+
+    monitor_items = monitor_repo.get_all_monitor_items()
+    monitor_tickers = [item['ticker'] for item in monitor_items]
+    monitor_map = {item['ticker']: item['display_name'] for item in monitor_items}
+    
+    def format_del_option(ticker):
+        """刪除選單專用格式化函數"""
+        if ticker == "--- 請選擇 ---":
+            return ticker
+        clean_ticker = ticker.replace('.TW', '')
+        name = str(monitor_map.get(ticker, "")).strip()
+        if not name or name == ticker or name == clean_ticker: return clean_ticker
+        if name.startswith(clean_ticker): return name
+        return f"{clean_ticker} {name}"
+
     with st.container(border=True):
-        st.markdown("### ▶️ 執行股票監測")
+        sidebar_header("▶️", "執行股票監測")
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            if st.button("開始", use_container_width=True): 
+            if st.button("開始", use_container_width=True, key="start_mon"): 
                 if not st.session_state.monitoring:
                     st.session_state.monitoring = True
-                    # (推播通知交由 engine_monitor 的 run_radar_scan 統一判斷)
+                    now_tpe = datetime.now(pytz.timezone('Asia/Taipei'))
+                    prefix = "TW" if 6 <= now_tpe.hour <= 18 else "US"
+                    send_telegram_message(f"🎯{prefix} | 🟢開始監測")
         with col_btn2:
-            if st.button("暫停", use_container_width=True): 
+            if st.button("暫停", use_container_width=True, key="stop_mon"): 
                 if st.session_state.monitoring:
                     st.session_state.monitoring = False
+                    now_tpe = datetime.now(pytz.timezone('Asia/Taipei'))
+                    prefix = "TW" if 6 <= now_tpe.hour <= 18 else "US"
+                    send_telegram_message(f"🎯{prefix} | 🟡暫停監測")
                     
-                    # 判斷時區發送暫停通知
-                    now_utc = datetime.datetime.now(datetime.timezone.utc)
-                    tpe_now = now_utc.astimezone(pytz.timezone('Asia/Taipei'))
-                    us_now = now_utc.astimezone(pytz.timezone('US/Eastern'))
-                    if datetime.time(6, 1) <= tpe_now.time() <= datetime.time(18, 0):
-                        send_telegram_message(f"🕒{tpe_now.strftime('%H:%M')} | 🎯TW MktIdx | 🟡暫停監測")
-                    else:
-                        send_telegram_message(f"🕒{us_now.strftime('%H:%M')} | 🎯US MktIdx | 🟡暫停監測")
-                    
-                    # 🔥 聯動清空引擎狀態 (解決盤中重啟被略過的問題)
-                    engine_monitor._MARKET_STATE = {'TW': 'CLOSED', 'US': 'CLOSED'}
-                    engine_monitor._ALERT_HISTORY.clear()
-                    
-        if st.session_state.monitoring: st.success("🟢 系統即時監測中...")
+        if st.session_state.monitoring: st.success("🟢 即時監測中")
         else: st.info("🟡 監測暫停中")
 
-    # --------------------------------------------------------
-    # ➕ 新增監測股票 (🔥 包含嚴格防呆入庫)
-    # --------------------------------------------------------
     with st.container(border=True):
-        st.markdown("### ➕ 新增監測股票")
+        sidebar_header("➕", "新增即時監控")
+        market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_a")
         
-        # 📂 字典庫選取
-        st.markdown("<div style='color:#38bdf8; font-size:1.0rem; font-weight:700; margin-top:5px; margin-bottom:5px;'>📂 從雲端字典選取</div>", unsafe_allow_html=True)
-        market_choice = st.radio("選擇市場", ["🇹🇼 台灣", "🇺🇸 美國"], horizontal=True, label_visibility="collapsed", key="add_market")
-        
+        # 替換為動態雲端字典與統一的格式化函數
         if "台灣" in market_choice:
-            selected_db = st.selectbox("🇹🇼 字典選取", tw_options, format_func=format_tw_option, key="db_tw")
+            selected_db = st.selectbox("tw 資料庫選取", dynamic_tw_options, format_func=dynamic_format_option, key="sel_tw_val", on_change=on_sel_change)
         else:
-            selected_db = st.selectbox("🇺🇸 字典選取", us_options, format_func=lambda x: stock_dict.get(x, x), key="db_us")
+            selected_db = st.selectbox("us 資料庫選取", dynamic_us_options, format_func=dynamic_format_option, key="sel_us_val", on_change=on_sel_change)
             
-        th_db = st.text_input("提醒門檻 (%)", placeholder="例: 5, 10", key="th_db")
-        en_db = st.text_input("進場提醒 ($)", placeholder="例: 150 (>= 觸發)", key="en_db")
-        ex_db = st.text_input("出場提醒 ($)", placeholder="例: 140 (<= 觸發)", key="ex_db")
+        if st.session_state.clear_input_flag:
+            st.session_state.manual_sym_val = ""
+            st.session_state.clear_input_flag = False
+            
+        new_sym = st.text_input("或 手動輸入代碼", placeholder="例: 6531", key="manual_sym_val", on_change=on_manual_change).strip().upper()
         
-        def process_and_validate(target_sym, th_text, en_text, ex_text):
-            if target_sym and target_sym != "--- 請選擇 ---":
-                with st.spinner(f"🔍 驗證 {target_sym} 中..."):
-                    # 🔥 嚴格防呆：即時驗證股票有效性
-                    try:
-                        test_df = yf.Ticker(target_sym).history(period="1d")
-                        if test_df.empty:
-                            st.error(f"❌ 查無股票代碼 {target_sym} 或已下市，拒絕寫入！")
-                            return
-                    except Exception:
-                        st.error(f"❌ 查詢 {target_sym} 發生連線錯誤，請稍後再試！")
-                        return
+        st.markdown("<div style='font-size:0.85rem; color:#94a3b8; margin-bottom:5px;'>監控條件設定：</div>", unsafe_allow_html=True)
+        th_text = st.text_input("提醒門檻 (%)", value="", placeholder="例: 5, 10", key="th_a", label_visibility="collapsed")
+        entry_text = st.text_input("進場提醒 ($)", value="", placeholder="進場價 (例: 150)", key="entry_a", label_visibility="collapsed")
+        exit_text = st.text_input("出場提醒 ($)", value="", placeholder="出場價 (例: 190)", key="exit_a", label_visibility="collapsed")
+        
+        if st.button("確認新增", use_container_width=True, key="btn_add_a"):
+            if not (th_text.strip() or entry_text.strip() or exit_text.strip()):
+                st.warning("⚠️ 請至少輸入一項監控條件！")
+            else:
+                target_sym = new_sym if new_sym else (selected_db if selected_db != "--- 請選擇 ---" else None)
+                if target_sym:
+                    mkt = "tw" if "台灣" in market_choice else "us"
+                    if mkt == "tw" and not target_sym.endswith(".TW"): target_sym += ".TW"
+                    if mkt == "us": target_sym = target_sym.replace(".TW", "")
                     
-                    # 確保寫入字典
-                    get_smart_display_name(target_sym, stock_dict, save_stock_dict)
+                    display_name = ""
+                    is_valid = False
                     
-                    # 寫入資料庫 Repo (若您的 repo 方法名稱不同，請於此處微調)
-                    try:
-                        monitor_repo.add_target(target_sym, th_text, en_text, ex_text)
-                        st.success(f"✅ {target_sym} 驗證成功並已加入雷達！")
+                    with st.spinner(f"🔍 驗證標的與獲取名稱中..."):
+                        try:
+                            if mkt == "tw":
+                                res = requests.get(f"https://tw.stock.yahoo.com/quote/{target_sym}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
+                                soup = BeautifulSoup(res.text, 'html.parser')
+                                title = soup.find('title').text
+                                if " - " in title:
+                                    clean_title = title.split(" - ")[0].split("(")[0]
+                                    name_part = clean_title.replace(target_sym.replace('.TW', ''), '').strip()
+                                    if name_part: display_name = name_part; is_valid = True
+                            else:
+                                fi = yf.Ticker(target_sym).fast_info
+                                if fi.last_price is not None: display_name = target_sym; is_valid = True
+                        except: pass
+                    
+                    if is_valid:
+                        # 相容性保留：寫入舊版本地字典，避免其他未拔管模組報錯
+                        if target_sym not in stock_dict or stock_dict[target_sym] != display_name:
+                            stock_dict[target_sym] = display_name
+                            save_stock_dict(stock_dict)
+                            
+                        # 🔥 關鍵寫入：永久寫入 Neon 雲端字典與監控母體表
+                        market_repo.upsert_dict_item(target_sym, display_name, mkt)
+                        monitor_repo.add_monitor_item(target_sym, display_name=display_name, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
+                        st.cache_data.clear()
+                        st.session_state.clear_input_flag = True
+                        st.success(f"✅ {display_name} ({target_sym}) 新增成功！")
                         st.rerun()
-                    except Exception as e:
-                        st.warning(f"寫入資料庫失敗: {e}")
+                    else: st.error("❌ 查無此股票或獲取失敗，拒絕寫入！")
 
-        if st.button("確認加入監測", use_container_width=True, key="btn_add_db"):
-            process_and_validate(selected_db, th_db, en_db, ex_db)
-            
-        st.markdown("<hr style='margin: 15px 0; border-color: #475569;'>", unsafe_allow_html=True)
-        
-        # ✍️ 手動輸入
-        st.markdown("<div style='color:#38bdf8; font-size:1.0rem; font-weight:700; margin-bottom:5px;'>✍️ 手動輸入新股票</div>", unsafe_allow_html=True)
-        new_sym = st.text_input("輸入代碼", placeholder="例: AAPL 或 2330", key="sym_manual").strip().upper()
-        th_man = st.text_input("提醒門檻 (%)", placeholder="例: 5, 10", key="th_man")
-        en_man = st.text_input("進場提醒 ($)", placeholder="例: 150", key="en_man")
-        ex_man = st.text_input("出場提醒 ($)", placeholder="例: 140", key="ex_man")
-        
-        if st.button("驗證並寫入系統", use_container_width=True, key="btn_add_man"): 
-            if new_sym and new_sym[0].isdigit() and ".TW" not in new_sym: 
-                new_sym += ".TW"
-            process_and_validate(new_sym, th_man, en_man, ex_man)
-
-    # --------------------------------------------------------
-    # 🗑️ 移除與管理標的 (🔥 雙層刪除系統)
-    # --------------------------------------------------------
     with st.container(border=True):
-        st.markdown("### 🗑️ 移除與管理標的")
-        del_mode = st.radio("選擇操作", ["🛑 停止雷達監測", "🗑️ 徹底刪除字典股號"], horizontal=True, label_visibility="collapsed")
-        
-        if "停止雷達監測" in del_mode:
-            st.markdown("<div style='color:#94a3b8; font-size:0.82rem; margin-bottom:8px;'>從目前的監控池移除，但保留在雲端字典中。</div>", unsafe_allow_html=True)
-            active_df = engine_monitor.get_monitor_targets()
-            active_tickers = active_df['ticker'].tolist() if not active_df.empty else []
-            display_opts = {sym: stock_dict.get(sym, sym).replace(".TW", "") for sym in active_tickers}
-            del_sym = st.selectbox("選擇停止監測的標的", ["--- 請選擇 ---"] + active_tickers, format_func=lambda x: display_opts.get(x, x) if x != "--- 請選擇 ---" else x)
-            
-            if st.button("確認停止", use_container_width=True) and del_sym != "--- 請選擇 ---":
-                try: 
-                    monitor_repo.delete_target(del_sym) # 呼叫 Repo 移除
-                    st.success(f"✅ 已停止監測 {del_sym}")
-                    st.rerun()
-                except Exception as e: st.warning(f"操作失敗: {e}")
-                
-        else:
-            st.markdown("<div style='color:#ef4444; font-size:0.82rem; margin-bottom:8px;'>⚠️ 從雲端字典中徹底抹除，不再出現於下拉選單。</div>", unsafe_allow_html=True)
-            all_dict_keys = sorted(list(stock_dict.keys()))
-            display_opts = {sym: stock_dict.get(sym, sym).replace(".TW", "") for sym in all_dict_keys}
-            purge_sym = st.selectbox("選擇徹底刪除的股號", ["--- 請選擇 ---"] + all_dict_keys, format_func=lambda x: display_opts.get(x, x) if x != "--- 請選擇 ---" else x)
-            
-            if st.button("確認徹底刪除", use_container_width=True) and purge_sym != "--- 請選擇 ---":
-                # 1. 從字典抹除
-                stock_dict.pop(purge_sym, None)
-                save_stock_dict(stock_dict)
-                # 2. 保險起見，同步從監控池抹除
-                try: monitor_repo.delete_target(purge_sym)
-                except: pass
-                st.success(f"🗑️ 已徹底刪除 {purge_sym}")
+        sidebar_header("🗑️", "移除監測標的")
+        del_sym = st.selectbox("刪除目標", ["--- 請選擇 ---"] + monitor_tickers, format_func=format_del_option, key="del_a", label_visibility="collapsed")
+        if st.button("確認刪除", use_container_width=True, key="btn_del_a"):
+            if del_sym != "--- 請選擇 ---":
+                monitor_repo.remove_monitor_item(del_sym)
+                st.cache_data.clear()
+                st.success(f"🗑️ 已移除標的")
                 st.rerun()
 
-    # --------------------------------------------------------
-    # ⏱️ 網頁刷新頻率 (🔥 UI 解耦，防失憶)
-    # --------------------------------------------------------
     with st.container(border=True):
-        st.markdown("### ⏱️ 網頁刷新頻率")
-        # 確保記憶體中有永久存在的預設值
-        if "refresh_a_val" not in st.session_state:
-            st.session_state.refresh_a_val = 30
-            
-        # 將 Key 改為專屬的 UI Key (refresh_sec_ui_a)
-        refresh_sec_a = st.slider("秒", 5, 60, st.session_state.refresh_a_val, key="refresh_sec_ui_a", label_visibility="collapsed")
-        
-        # 寫回永久記憶體
-        st.session_state.refresh_a_val = refresh_sec_a
-        st.session_state.refresh_a = refresh_sec_a
-        
-        if st.button("🔄 手動立即刷新", use_container_width=True):
+        sidebar_header("⏱️", "系統運行狀態")
+        refresh_sec_a = st.slider("刷新頻率(秒)", 5, 60, 30, key="refresh_a")
+        if st.button("🔄 手動刷新", use_container_width=True, key="manual_ref_a"): 
+            st.cache_data.clear()
             st.rerun()
 
 # ==========================================================
-# 3️⃣ 監控主畫面渲染 (Micro-Frontend Hook)
+# 2️⃣ 資料獲取
 # ==========================================================
-def render_telegram_manual_test_ui():
-    """保留給手動測試推播元件的擴充槽"""
-    with st.sidebar:
-        with st.container(border=True):
-            st.markdown("### 🛠️ 手動測試推播")
-            if st.button("發送目前小卡狀態", use_container_width=True):
-                st.session_state.trigger_manual_push = True
+def get_realtime_radar_data(tickers_tuple, is_monitoring):
+    quotes, alerts = engine_monitor.run_radar_scan(is_monitoring)
+    indices = engine_monitor.fetch_realtime_quotes(['^TWII', '^IXIC'])
+    quotes.update(indices)
+    return quotes, alerts
 
+# ==========================================================
+# 3️⃣ 介面渲染主程式
+# ==========================================================
 def render_radar_dashboard():
-    """主畫面戰情室卡片渲染"""
+    st.markdown("### 📡 實戰雷達監測 (Execution Battlefield)")
     
-    # 透過 engine_monitor 獲取最新報價與警報
-    quotes, triggered_alerts = engine_monitor.run_radar_scan(st.session_state.monitoring)
     targets_df = engine_monitor.get_monitor_targets()
-    
     if targets_df.empty:
-        st.info("📭 目前清單中沒有股票，請由側邊欄新增。")
+        st.info("💡 實戰彈藥庫目前為空，請先從左側「新增即時監控」寫入標的。")
         return
+
+    current_tickers = tuple(targets_df['ticker'].tolist())
+    
+    is_monitoring = st.session_state.get('monitoring', False)
+
+    with st.spinner("📡 正在擷取即時報價與掃描防線..."):
+        quotes, alerts = get_realtime_radar_data(current_tickers, is_monitoring)
+
+    tw_targets = targets_df[targets_df['market'] == 'tw']
+    us_targets = targets_df[targets_df['market'] == 'us']
+
+    if not tw_targets.empty:
+        render_market_group("tw", tw_targets, quotes, alerts)
         
-    # 簡單的卡片矩陣展示 (延續 MON_app 的深色風格)
-    matrix_html = '<div class="flex-matrix-container" style="display: flex; flex-wrap: wrap; gap: 14px;">'
+    if not us_targets.empty:
+        if not tw_targets.empty:
+            st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
+        render_market_group("us", us_targets, quotes, alerts)
+
+# ==========================================================
+# 4️⃣ 市場群組渲染器
+# ==========================================================
+def render_market_group(market_type, targets_df, quotes, alerts):
+    if market_type == "tw":
+        idx_ticker = "^TWII"
+        idx_name = "tw 台灣股市 (Taiwan Market)"
+        icon = "🔴"
+        bar_color = "#3b82f6"
+    else:
+        idx_ticker = "^IXIC"
+        idx_name = "us 美國股市 (Nasdaq)"
+        icon = "🟢"
+        bar_color = "#3b82f6"
+
+    idx_quote_html = ""
+    if idx_ticker in quotes:
+        q = quotes[idx_ticker]
+        curr = q['current']
+        chg_amt = q['change_amt']
+        chg_pct = q['change_pct']
+        
+        if market_type == "tw":
+            color = "#ef4444" if chg_amt > 0 else "#10b981"
+        else:
+            color = "#10b981" if chg_amt > 0 else "#ef4444"
+            
+        arrow = "↑" if chg_amt > 0 else "↓"
+        sign = "+" if chg_amt > 0 else ""
+        idx_quote_html = f"""<span style="color: #38bdf8; margin-left: 10px;">{curr:,.2f}</span> <span style="color: {color}; font-size: 1rem; margin-left: 8px;">{sign}{chg_amt:.2f} ({arrow}{abs(chg_pct):.2f}%)</span>"""
+                             
+    header_html = textwrap.dedent(f"""
+    <div style="display: flex; align-items: center; margin: 10px 0 20px 0;">
+        <div style="width: 4px; height: 22px; background-color: {bar_color}; margin-right: 12px;"></div>
+        <div style="font-size: 1.25rem; font-weight: 800; color: #f8fafc;">
+            {icon} {idx_name} {idx_quote_html}
+        </div>
+    </div>
+    """).strip()
+    st.markdown(header_html, unsafe_allow_html=True)
+
+    cards_html = "<div style='display: flex; flex-wrap: wrap; gap: 18px;'>"
     
     for _, row in targets_df.iterrows():
-        sym = row['ticker']
-        if sym not in quotes:
-            continue
+        ticker = row['ticker']
+        clean_ticker = ticker.replace('.TW', '')
+        clean_name = str(row['display_name']).strip()
+
+        if not clean_name or clean_name == ticker or clean_name == clean_ticker:
+            display_title = clean_ticker
+        elif clean_name.startswith(clean_ticker):
+            display_title = clean_name
+        else:
+            display_title = f"{clean_ticker} {clean_name}"
+
+        if ticker in quotes:
+            q = quotes[ticker]
+            curr = q['current']
+            prev = q['prev']
+            open_p = q['open']
+            chg_amt = q['change_amt']
+            chg_pct = q['change_pct']
             
-        q = quotes[sym]
-        c_price = q['current']
-        p_close = q['prev']
-        change_pct = q['change_pct']
-        change_amt = q['change_amt']
-        
-        is_up = change_amt >= 0
-        is_tw = ".TW" in sym
-        
-        # 沿用 MON 的紅綠反轉美學
-        card_bg = ("rgba(239, 68, 68, 0.12)" if is_up else "rgba(16, 185, 129, 0.12)") if is_tw else ("rgba(16, 185, 129, 0.12)" if is_up else "rgba(239, 68, 68, 0.12)")
-        card_border = ("rgba(239, 68, 68, 0.35)" if is_up else "rgba(16, 185, 129, 0.35)") if is_tw else ("rgba(16, 185, 129, 0.35)" if is_up else "rgba(239, 68, 68, 0.35)")
-        badge_color = ("#ef4444" if is_up else "#10b981") if is_tw else ("#10b981" if is_up else "#ef4444")
-        
-        display_name = sym.replace(".TW", "")
-        
-        matrix_html += f"""
-        <div style="background-color: #171a23; border: 1px solid {card_border}; border-radius: 12px; padding: 16px; width: 295px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
-            <div style="font-size: 1.25rem; font-weight: 700; color: #ffffff; margin-bottom: 2px;">{display_name}</div>
-            <div style="color: #38bdf8; font-size: 1.9rem; font-weight: 700; margin-bottom: 10px;">${c_price:.2f}</div>
-            <div style="display: flex; justify-content: space-between;">
-                <div style="flex: 1; border-right: 1px dashed #2d3748; padding-right: 8px;">
-                    <span style="color: #94a3b8; font-size: 0.85rem;">昨收：</span><span style="color: #f1f5f9; font-size: 0.85rem; font-weight: 600;">${p_close:.2f}</span><br>
-                    <span style="color: #94a3b8; font-size: 0.85rem;">漲幅：</span><span style="color: {badge_color}; font-size: 0.85rem; font-weight: 600;">{change_amt:+.2f} ({change_pct:+.2f}%)</span>
-                </div>
-                <div style="flex: 1; padding-left: 8px;">
-                    <span style="color: #a78bfa; font-size: 0.85rem;">門檻：</span><span style="color: #f1f5f9; font-size: 0.85rem; font-weight: 600;">{row['thresholds']}</span><br>
-                    <span style="color: #a78bfa; font-size: 0.85rem;">進場：</span><span style="color: #f1f5f9; font-size: 0.85rem; font-weight: 600;">{row['entry_prices']}</span><br>
-                    <span style="color: #a78bfa; font-size: 0.85rem;">出場：</span><span style="color: #f1f5f9; font-size: 0.85rem; font-weight: 600;">{row['exit_prices']}</span>
-                </div>
+            is_tw = market_type == "tw"
+            
+            if chg_amt > 0:
+                sign = "+"
+                if is_tw: 
+                    bg_color = "#2b1819" ; border_color = "#5a262c" ; text_color = "#ef4444" 
+                else:     
+                    bg_color = "#18241d" ; border_color = "#1f4738" ; text_color = "#10b981"
+            elif chg_amt < 0:
+                sign = ""
+                if is_tw: 
+                    bg_color = "#18241d" ; border_color = "#1f4738" ; text_color = "#10b981"
+                else:     
+                    bg_color = "#2b1819" ; border_color = "#5a262c" ; text_color = "#ef4444"
+            else:
+                sign = ""
+                bg_color = "#1c191b" ; border_color = "#3d2a2e" ; text_color = "#cbd5e1"
+                
+            chg_str = f"{sign}{chg_amt:.2f} ({sign}{chg_pct:.2f}%)"
+            
+            badge_html = ""
+            ticker_alerts = [a for a in alerts if a['ticker'] == ticker]
+            if ticker_alerts:
+                badge_html = f"<div style='margin-top: 15px; background-color: {bg_color}; color: {text_color}; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 0.95rem; border: 1px solid {text_color}; box-shadow: inset 0 0 8px rgba(0,0,0,0.5);'>📈 觸發: {ticker_alerts[0]['message']}</div>"
+
+            th_raw = row['thresholds'] if pd.notna(row['thresholds']) and row['thresholds'] else "--"
+            en_raw = row['entry_prices'] if pd.notna(row['entry_prices']) and row['entry_prices'] else "--"
+            ex_raw = row['exit_prices'] if pd.notna(row['exit_prices']) and row['exit_prices'] else "--"
+
+            card_html = textwrap.dedent(f"""
+            <div style="width: 280px; min-width: 280px; background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
+            <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
+            <div style="font-size: 2.1rem; font-weight: 800; color: #38bdf8; margin-bottom: 16px;">${curr:.2f}</div>
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+            <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">昨收： <span style="color: #f8fafc; margin-left: 5px;">${prev:.2f}</span></div>
+            <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">開盤： <span style="color: #f8fafc; margin-left: 5px;">${open_p:.2f}</span></div>
+            <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">漲幅： <span style="color: {text_color}; margin-left: 5px;">{chg_str}</span></div>
             </div>
-        </div>
-        """
-    
-    matrix_html += '</div>'
-    st.markdown(matrix_html, unsafe_allow_html=True)
+            <div style="border-top: 1px dashed #475569; padding-top: 12px; text-align: center; color: #64748b; font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">門檻: {th_raw}% | 進場: ${en_raw} | 出場: ${ex_raw}</div>
+            {badge_html}
+            </div>
+            """).strip()
+            
+            cards_html += card_html
+        else:
+            card_loading = textwrap.dedent(f"""
+            <div style="width: 280px; min-width: 280px; background-color: #1c191b; border: 1px solid #3d2a2e; border-radius: 8px; padding: 18px;">
+            <div style="font-size: 1.15rem; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{display_title}</div>
+            <div style="color: #64748b; font-size: 1rem; margin-top: 20px;">資料讀取中...</div>
+            </div>
+            """).strip()
+            cards_html += card_loading
+            
+    cards_html += "</div>"
+    st.markdown(cards_html, unsafe_allow_html=True)
+
+# ==========================================================
+# 5️⃣ 系統工具組與推播測試元件
+# ==========================================================
+def render_telegram_manual_test_ui():
+    with st.sidebar.expander("🛠️ 系統推播測試", expanded=False):
+        if st.button("發送目前小卡狀態", type="primary", use_container_width=True):
+            with st.spinner("發送中，請稍候..."):
+                now_tpe = datetime.now(pytz.timezone('Asia/Taipei'))
+                is_tw_time = 6 <= now_tpe.hour <= 18
+                
+                target_idx = "^TWII" if is_tw_time else "^IXIC"
+                idx_name = "TW" if is_tw_time else "US"
+                
+                msg_lines = []
+                
+                idx_quotes = engine_monitor.fetch_realtime_quotes([target_idx])
+                if target_idx in idx_quotes:
+                    q = idx_quotes[target_idx]
+                    msg_lines.append(build_qbs_tg_msg(idx_name, q['current'], q['change_pct'], is_manual=True))
+                else:
+                    msg_lines.append(f"🎯{idx_name} | ⚠️大盤獲取失敗 | 🛠️手動")
+                
+                targets_df = engine_monitor.get_monitor_targets()
+                if not targets_df.empty:
+                    if is_tw_time:
+                        targets_df = targets_df[targets_df['ticker'].str.contains(r'\.TW', na=False, regex=True)]
+                    else:
+                        targets_df = targets_df[~targets_df['ticker'].str.contains(r'\.TW', na=False, regex=True)]
+                    
+                    if not targets_df.empty:
+                        current_tickers = targets_df['ticker'].tolist()
+                        quotes = engine_monitor.fetch_realtime_quotes(current_tickers)
+                        
+                        for _, row in targets_df.iterrows():
+                            ticker = row['ticker']
+                            clean_name = ticker.replace(".TW", "")
+                                
+                            if ticker in quotes:
+                                q = quotes[ticker]
+                                line = build_qbs_tg_msg(clean_name, q['current'], q['change_pct'], is_manual=True)
+                                msg_lines.append(line)
+                                
+                final_msg = "\n".join(msg_lines)
+                success = send_telegram_message(final_msg)
+                
+                if success:
+                    st.success("✅ 手動推播發送成功！")
+                else:
+                    st.error("❌ 發送失敗，請檢查金鑰設定或網路連線。")
