@@ -169,7 +169,7 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         
         del_mode = st.radio(
             "選擇刪除模式", 
-            ["🛑 停止監測 (保留於字典)", "🗑️ 徹底抹除 (清空字典紀錄)"],
+            ["🛑 移除監測 ", "🗑️ 刪除資料庫 "],
             help="【停止監測】只會從雷達掃描中移除，下拉選單依然保留。\n【徹底抹除】會將該股號從您的雲端字典完全刪除，適用於打錯股號或下市清整。",
             label_visibility="collapsed"
         )
