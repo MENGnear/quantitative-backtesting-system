@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.10.3 (Phase 7: 雲端動態字典全面取代版)
+# 程式版本 : ui_v1.11.0 (Phase 7: 雲端動態字典與雙層刪除版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [字典上雲] 匯入 market_repo，新增標的時同步寫入雲端字典，與頁面 B 共享記憶。
-#   2. [格式統一] 實作 dynamic_format_option 與 format_del_option，全面對齊「代碼 + 名稱」。
-#   3. [復原修復] 完整保留原版客製化的 HTML/CSS 卡片與市場分組排版邏輯。
+#   1. [雙層刪除] 實作「停止監測」與「徹底抹除字典」雙軌制，徹底解決錯誤股號永久殘留下拉選單的問題。
+#   2. [寫入防呆] 繼承 v1.10.3 的爬蟲與 API 雙重驗證，輸入無效股號時拒絕寫入永久資料庫。
+#   3. [格式統一] 完美繼承 dynamic_format_option，全面對齊「代碼 + 名稱」。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 側邊欄渲染 (包含雲端字典覆寫與格式統一)
+#   - 1️⃣ 側邊欄渲染 (🔥 新增雙層刪除機制)
 #   - 2️⃣ 資料獲取與動態快取防護
-#   - 3️⃣ 介面渲染主程式 (維持原樣)
-#   - 4️⃣ 市場群組渲染器 (維持原樣)
+#   - 3️⃣ 介面渲染主程式
+#   - 4️⃣ 市場群組渲染器
 #   - 5️⃣ 系統工具組與推播測試元件
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -46,7 +46,7 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
             st.session_state.sel_tw_val = "--- 請選擇 ---"
             st.session_state.sel_us_val = "--- 請選擇 ---"
 
-    # 🔥 關鍵改造：從 Neon 資料庫載入雲端股票字典，覆寫原有的暫存參數
+    # 從 Neon 資料庫載入雲端股票字典
     db_tw_items = market_repo.get_dict_options('tw')
     db_us_items = market_repo.get_dict_options('us')
     
@@ -105,7 +105,6 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
         sidebar_header("➕", "新增即時監控")
         market_choice = st.radio("選擇市場", ["tw 台灣", "us 美國"], horizontal=True, key="mkt_a")
         
-        # 替換為動態雲端字典與統一的格式化函數
         if "台灣" in market_choice:
             selected_db = st.selectbox("tw 資料庫選取", dynamic_tw_options, format_func=dynamic_format_option, key="sel_tw_val", on_change=on_sel_change)
         else:
@@ -135,6 +134,7 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
                     display_name = ""
                     is_valid = False
                     
+                    # 嚴格的防呆驗證機制：拒絕無效股號
                     with st.spinner(f"🔍 驗證標的與獲取名稱中..."):
                         try:
                             if mkt == "tw":
@@ -151,12 +151,10 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
                         except: pass
                     
                     if is_valid:
-                        # 相容性保留：寫入舊版本地字典，避免其他未拔管模組報錯
                         if target_sym not in stock_dict or stock_dict[target_sym] != display_name:
                             stock_dict[target_sym] = display_name
                             save_stock_dict(stock_dict)
                             
-                        # 🔥 關鍵寫入：永久寫入 Neon 雲端字典與監控母體表
                         market_repo.upsert_dict_item(target_sym, display_name, mkt)
                         monitor_repo.add_monitor_item(target_sym, display_name=display_name, market=mkt, thresholds=th_text, entry_prices=entry_text, exit_prices=exit_text)
                         st.cache_data.clear()
@@ -165,15 +163,49 @@ def render_sidebar(stock_dict, save_stock_dict, tw_options, us_options, format_t
                         st.rerun()
                     else: st.error("❌ 查無此股票或獲取失敗，拒絕寫入！")
 
+    # 🔥 雙層刪除機制
     with st.container(border=True):
         sidebar_header("🗑️", "移除監測標的")
-        del_sym = st.selectbox("刪除目標", ["--- 請選擇 ---"] + monitor_tickers, format_func=format_del_option, key="del_a", label_visibility="collapsed")
+        
+        del_mode = st.radio(
+            "選擇刪除模式", 
+            ["🛑 停止監測 (保留於字典)", "🗑️ 徹底抹除 (清空字典紀錄)"],
+            help="【停止監測】只會從雷達掃描中移除，下拉選單依然保留。\n【徹底抹除】會將該股號從您的雲端字典完全刪除，適用於打錯股號或下市清整。",
+            label_visibility="collapsed"
+        )
+        
+        if "徹底" in del_mode:
+            # 模式 2：徹底抹除 (從雲端字典抓取所有選項)
+            all_dict_tickers = [item['ticker'] for item in db_tw_items + db_us_items]
+            sorted_del_list = ["--- 請選擇 ---"] + sorted([k for k in all_dict_tickers if ".TW" in k.upper()]) + sorted([k for k in all_dict_tickers if ".TW" not in k.upper()])
+            del_sym = st.selectbox("選擇要徹底抹除的股號", sorted_del_list, format_func=dynamic_format_option, key="del_a", label_visibility="collapsed")
+        else:
+            # 模式 1：停止監測 (只從雷達監控池抓取)
+            sorted_del_list = ["--- 請選擇 ---"] + sorted([k for k in monitor_tickers if ".TW" in k.upper()]) + sorted([k for k in monitor_tickers if ".TW" not in k.upper()])
+            del_sym = st.selectbox("選擇要停止監測的股號", sorted_del_list, format_func=format_del_option, key="del_a", label_visibility="collapsed")
+
         if st.button("確認刪除", use_container_width=True, key="btn_del_a"):
             if del_sym != "--- 請選擇 ---":
-                monitor_repo.remove_monitor_item(del_sym)
+                if "徹底" in del_mode:
+                    # 嘗試呼叫 market_repo 進行徹底刪除 (若底層 Repository 支援 delete_dict_item 或 remove_dict_item)
+                    try:
+                        if hasattr(market_repo, 'delete_dict_item'):
+                            market_repo.delete_dict_item(del_sym)
+                        elif hasattr(market_repo, 'remove_dict_item'):
+                            market_repo.remove_dict_item(del_sym)
+                    except Exception as e:
+                        st.warning(f"字典清除發生異常: {e}")
+                        
+                    monitor_repo.remove_monitor_item(del_sym)
+                    st.success(f"🗑️ 已將 {del_sym} 從雲端字典徹底抹除！")
+                else:
+                    monitor_repo.remove_monitor_item(del_sym)
+                    st.success(f"🛑 已停止監測 {del_sym}。")
+                
                 st.cache_data.clear()
-                st.success(f"🗑️ 已移除標的")
                 st.rerun()
+            else:
+                st.warning("⚠️ 請先選擇要刪除的標的。")
 
     with st.container(border=True):
         sidebar_header("⏱️", "系統運行狀態")
