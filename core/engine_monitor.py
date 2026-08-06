@@ -2,17 +2,17 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.9.0 (Phase 7: 開盤防呆與淨化濾網版)
+# 程式版本 : monitor_v1.10.0 (Phase 8: 幽靈報價與死水防護終極版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [資料淨化] 新增時間戳日期驗證 (is_today)，拒絕拿昨天的歷史 K 線當作今日報價，解決開盤假報價轟炸。
-#   2. [試撮過濾] 新增 09:00~09:02 開盤零成交量 (Volume <= 0) 濾網，阻擋未正式開盤的試撮假突破。
-#   3. [架構繼承] 完整保留大盤 5 分鐘滾動暴衝偵測、三層降級報價防護，與狀態緩衝判定。
+#   1. [全域時間戳] 拔除嚴重快取延遲的 .info 屬性，全面依賴 history 進行嚴格的 Date() 驗證，杜絕時空穿越報價。
+#   2. [價格指紋鎖] 升級 _ALERT_HISTORY，新增 last_price 比對。冷卻解鎖後若價格未跳動(死水)，強制靜音防洗版。
+#   3. [大盤正名] 將大盤廣播代碼修正為 TW MktIdx / US MktIdx，避免與股票代碼混淆。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 基礎環境與狀態記憶體初始化
-#   - 2️⃣ 高頻報價與資料解析模組 (🔥 新增日期與成交量防呆濾網)
-#   - 3️⃣ 警報觸發與冷卻邏輯
+#   - 1️⃣ 基礎環境與狀態記憶體初始化 (🔥 升級為指紋記憶體)
+#   - 2️⃣ 高頻報價與資料解析模組 (🔥 拔除 info，嚴格時間戳)
+#   - 3️⃣ 警報觸發與冷卻邏輯 (🔥 導入價格指紋鎖)
 #   - 4️⃣ 引擎主程序
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -32,6 +32,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # ==========================================================
 # 1️⃣ 基礎環境與狀態記憶體初始化
 # ==========================================================
+# 🔥 升級為字典結構儲存: {'interval_id': str, 'price': float}
 _ALERT_HISTORY = {}
 _MARKET_STATE = {'TW': 'CLOSED', 'US': 'CLOSED'}
 
@@ -47,56 +48,45 @@ def get_monitor_targets():
     return monitor_repo.get_monitor_targets_df()
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組 (🔥 新增日期與成交量防呆濾網)
+# 2️⃣ 高頻報價與資料解析模組 (🔥 拔除 info，嚴格時間戳)
 # ==========================================================
 def get_realtime_price(ticker, market_now):
     """
-    單檔股票三層降級報價防護 (含日期與成交量驗證)：
-    Tier 1: info API
-    Tier 2: fast_info API
-    Tier 3: history API (K線回推)
+    單檔股票雙層報價防護 (強制日期驗證)：
+    Tier 1: history API (最可靠的時間戳來源)
+    Tier 2: fast_info API (輕量備援)
     """
     c_price, p_close, o_price = None, None, None
     vol = 0
-    is_today = True # 預設為 True，若明確抓到舊資料則改為 False
+    is_today = False
     
     try:
         ticker_obj = yf.Ticker(ticker)
         
-        # Tier 1: 嘗試使用常規 info
+        # Tier 1: 首選 history 5d，以取得絕對可靠的日期驗證
         try:
-            info = ticker_obj.info
-            c_price = info.get('currentPrice', info.get('regularMarketPrice'))
-            p_close = info.get('previousClose', info.get('regularMarketPreviousClose'))
-            o_price = info.get('open', info.get('regularMarketOpen'))
-            vol = info.get('regularMarketVolume', info.get('volume', 0))
+            df = ticker_obj.history(period="5d", auto_adjust=False).dropna(subset=["Open", "Close"])
+            if not df.empty and len(df) >= 2:
+                c_price = float(df['Close'].iloc[-1])
+                p_close = float(df['Close'].iloc[-2])
+                o_price = float(df['Open'].iloc[-1])
+                vol = float(df['Volume'].iloc[-1])
+                
+                # 嚴格驗證資料日期是否為當地今日
+                last_date = df.index[-1].date()
+                if last_date == market_now.date():
+                    is_today = True 
         except Exception: 
             pass
             
-        # Tier 2: 嘗試使用輕量化 fast_info
+        # Tier 2: 若 history 失敗，嘗試使用輕量化 fast_info 作為底線
         if c_price is None or p_close is None:
             try:
                 c_price = float(ticker_obj.fast_info['last_price'])
                 p_close = float(ticker_obj.fast_info['previous_close'])
                 o_price = float(ticker_obj.fast_info.get('open', c_price))
                 vol = float(ticker_obj.fast_info.get('last_volume', 0))
-            except Exception: 
-                pass
-                
-        # Tier 3: 最終底線 - 解析歷史 5 日 K 線
-        if c_price is None or p_close is None:
-            try:
-                df = ticker_obj.history(period="5d", auto_adjust=False).dropna(subset=["Open", "Close"])
-                if not df.empty and len(df) >= 2:
-                    c_price = float(df['Close'].iloc[-1])
-                    p_close = float(df['Close'].iloc[-2])
-                    o_price = float(df['Open'].iloc[-1])
-                    vol = float(df['Volume'].iloc[-1])
-                    
-                    # 嚴格驗證 Tier 3 的資料日期
-                    last_date = df.index[-1].date()
-                    if last_date < market_now.date():
-                        is_today = False # 確定抓到昨天的舊資料
+                # fast_info 無法確保日期，為防開盤幽靈，預設 is_today = False 讓外層去濾
             except Exception: 
                 pass
                 
@@ -119,7 +109,7 @@ def fetch_realtime_quotes(tickers):
         c_price, p_close, o_price, vol, is_today = get_realtime_price(ticker, market_now)
         
         if c_price is not None and p_close is not None:
-            # 🛡️ 濾網 1：昨天舊資料攔截 (解決 09:00 卡頓轟炸)
+            # 🛡️ 濾網 1：昨天舊資料攔截 (解決時空穿越與 09:00 卡頓轟炸)
             if not is_today and market_now.time() >= datetime.time(9, 0):
                 logging.info(f"⏳ [{ticker}] 尚無今日即時報價，攔截幽靈舊資料。")
                 continue
@@ -141,7 +131,7 @@ def fetch_realtime_quotes(tickers):
                 'change_pct': round(change_pct, 2)
             }
         else:
-            logging.warning(f"⚠️ [{ticker}] 三層防護皆無法獲取報價，略過本次更新。")
+            logging.warning(f"⚠️ [{ticker}] 防護皆無法獲取報價，略過本次更新。")
             
     return quotes
 
@@ -154,7 +144,7 @@ def parse_custom_values(val_str):
         return []
 
 # ==========================================================
-# 3️⃣ 警報觸發與冷卻邏輯
+# 3️⃣ 警報觸發與冷卻邏輯 (🔥 導入價格指紋鎖)
 # ==========================================================
 def evaluate_alerts(row, quote, tz_now):
     ticker = row['ticker']
@@ -195,10 +185,20 @@ def evaluate_alerts(row, quote, tz_now):
         
         current_interval_id = f"{tz_now.strftime('%Y%m%d_%H')}_{(tz_now.minute // 5) * 5:02d}"
         
-        if _ALERT_HISTORY.get(ticker) != current_interval_id:
-            msg = build_qbs_tg_msg(clean_name, current_price, change_pct, is_manual=False)
-            send_telegram_message(msg)
-            _ALERT_HISTORY[ticker] = current_interval_id
+        # 讀取歷史指紋紀錄
+        last_record = _ALERT_HISTORY.get(ticker, {})
+        last_interval = last_record.get('interval_id')
+        last_price = last_record.get('price')
+        
+        if last_interval != current_interval_id:
+            # 🛡️ 價格指紋鎖：冷卻解鎖，但價格一毛未跳 (死水)，強制阻擋！
+            if last_price is not None and abs(current_price - last_price) < 0.0001:
+                logging.info(f"🛑 [{ticker}] 觸發死水防護鎖，攔截定時重複推播。")
+                _ALERT_HISTORY[ticker] = {'interval_id': current_interval_id, 'price': current_price}
+            else:
+                msg = build_qbs_tg_msg(clean_name, current_price, change_pct, is_manual=False)
+                send_telegram_message(msg)
+                _ALERT_HISTORY[ticker] = {'interval_id': current_interval_id, 'price': current_price}
 
     return alerts
 
@@ -230,27 +230,27 @@ def run_radar_scan(is_monitoring=False):
     process_tw = False
     process_us = False
 
-    # 🌟 階段一：開盤判定與狀態更新 (加入盤中判定)
+    # 🌟 階段一：開盤判定與狀態更新
     if is_monitoring:
         if tw_open <= now_tpe_time <= tw_close_process:
             process_tw = True
             if now_tpe_time < tw_close_trigger and _MARKET_STATE.get('TW') != 'OPEN':
                 _MARKET_STATE['TW'] = 'OPEN'
                 if now_tpe_time <= tw_open_buffer:
-                    send_telegram_message("🎯TW | 🟢開盤")
+                    send_telegram_message("🎯TW MktIdx | 🟢開盤")
                 else:
-                    send_telegram_message("🎯TW | 🟢盤中")
+                    send_telegram_message("🎯TW MktIdx | 🟢盤中")
                 
         if us_open <= now_us_time <= us_close_process:
             process_us = True
             if now_us_time < us_close_trigger and _MARKET_STATE.get('US') != 'OPEN':
                 _MARKET_STATE['US'] = 'OPEN'
                 if now_us_time <= us_open_buffer:
-                    send_telegram_message("🎯US | 🟢開盤")
+                    send_telegram_message("🎯US MktIdx | 🟢開盤")
                 else:
-                    send_telegram_message("🎯US | 🟢盤中")
+                    send_telegram_message("🎯US MktIdx | 🟢盤中")
 
-    # 🌟 階段二：常規報價與警報擷取 (加入大盤滾動暴衝偵測)
+    # 🌟 階段二：常規報價與警報擷取 (加入大盤滾動暴衝與指紋鎖)
     if is_monitoring:
         if process_tw:
             idx_quotes = fetch_realtime_quotes(['^TWII'])
@@ -258,12 +258,19 @@ def run_radar_scan(is_monitoring=False):
                 q = idx_quotes['^TWII']
                 curr_price = q['current']
                 
-                # 1) 15 分鐘常規大盤廣播
+                # 1) 15 分鐘常規大盤廣播 (導入價格指紋鎖)
                 idx_interval_id = f"IDX_TW_{now_tpe.strftime('%Y%m%d_%H')}_{(now_tpe.minute // 15) * 15:02d}"
-                if _ALERT_HISTORY.get('INDEX_TW') != idx_interval_id:
-                    msg = build_qbs_tg_msg("TW", curr_price, q['change_pct'], is_manual=False)
-                    send_telegram_message(msg)
-                    _ALERT_HISTORY['INDEX_TW'] = idx_interval_id
+                last_idx_record = _ALERT_HISTORY.get('INDEX_TW', {})
+                
+                if last_idx_record.get('interval_id') != idx_interval_id:
+                    last_idx_price = last_idx_record.get('price')
+                    if last_idx_price is not None and abs(curr_price - last_idx_price) < 0.0001:
+                        # 死水防護
+                        _ALERT_HISTORY['INDEX_TW'] = {'interval_id': idx_interval_id, 'price': curr_price}
+                    else:
+                        msg = build_qbs_tg_msg("TW MktIdx", curr_price, q['change_pct'], is_manual=False)
+                        send_telegram_message(msg)
+                        _ALERT_HISTORY['INDEX_TW'] = {'interval_id': idx_interval_id, 'price': curr_price}
                 
                 # 2) 5 分鐘滾動視窗暴衝偵測
                 history = _INDEX_HISTORY['TW']
@@ -296,12 +303,19 @@ def run_radar_scan(is_monitoring=False):
                 q = idx_quotes['^IXIC']
                 curr_price = q['current']
                 
-                # 1) 15 分鐘常規大盤廣播
+                # 1) 15 分鐘常規大盤廣播 (導入價格指紋鎖)
                 idx_interval_id = f"IDX_US_{now_us.strftime('%Y%m%d_%H')}_{(now_us.minute // 15) * 15:02d}"
-                if _ALERT_HISTORY.get('INDEX_US') != idx_interval_id:
-                    msg = build_qbs_tg_msg("US", curr_price, q['change_pct'], is_manual=False)
-                    send_telegram_message(msg)
-                    _ALERT_HISTORY['INDEX_US'] = idx_interval_id
+                last_idx_record = _ALERT_HISTORY.get('INDEX_US', {})
+                
+                if last_idx_record.get('interval_id') != idx_interval_id:
+                    last_idx_price = last_idx_record.get('price')
+                    if last_idx_price is not None and abs(curr_price - last_idx_price) < 0.0001:
+                        # 死水防護
+                        _ALERT_HISTORY['INDEX_US'] = {'interval_id': idx_interval_id, 'price': curr_price}
+                    else:
+                        msg = build_qbs_tg_msg("US MktIdx", curr_price, q['change_pct'], is_manual=False)
+                        send_telegram_message(msg)
+                        _ALERT_HISTORY['INDEX_US'] = {'interval_id': idx_interval_id, 'price': curr_price}
                     
                 # 2) 5 分鐘滾動視窗暴衝偵測
                 history = _INDEX_HISTORY['US']
@@ -350,10 +364,10 @@ def run_radar_scan(is_monitoring=False):
     if is_monitoring:
         if now_tpe_time >= tw_close_trigger and _MARKET_STATE.get('TW') == 'OPEN':
             _MARKET_STATE['TW'] = 'CLOSED'
-            send_telegram_message("🎯TW | 🔴收盤")
+            send_telegram_message("🎯TW MktIdx | 🔴收盤")
             
         if now_us_time >= us_close_trigger and _MARKET_STATE.get('US') == 'OPEN':
             _MARKET_STATE['US'] = 'CLOSED'
-            send_telegram_message("🎯US | 🔴收盤")
+            send_telegram_message("🎯US MktIdx | 🔴收盤")
             
     return quotes, all_triggered_alerts
