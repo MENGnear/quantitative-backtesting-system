@@ -2,18 +2,19 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : core/engine_monitor.py
-# 程式版本 : monitor_v1.10.1 (Phase 8: 雙核精準引擎與記憶重置版)
+# 程式版本 : monitor_v1.10.3 (Phase 8: 大盤推播命名復原與三核引擎版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [雙核引擎] 結合 fast_info (穩抓昨收) 與 1m K線 (確保 auto_adjust=True 權息還原與精準時間戳)，解決美股價格錯亂。
-#   2. [記憶重置] 新增 reset_radar_state() 供 UI 呼叫，解決暫停後二次啟動造成的盤中狀態不同步 (失憶症)。
-#   3. [防護繼承] 完整保留價格指紋鎖 (死水防護) 與大盤暴衝滾動偵測。
+#   1. [排版復原] 嚴格遵守 UI 規範，將大盤推播名稱復原為 TW 與 US，移除冗餘後綴。
+#   2. [自我修復 - 昨收] 導入日 K 線 (5d) 作為歷史帳本，比對日期後鎖定真實昨收，免疫清晨換日錯亂。
+#   3. [自我修復 - 現價] 交叉比對 fast_info 與 1m K線，優先採用 fast_info 補回 13:30 遺失的最後一盤現價。
+#   4. [防護繼承] 完整保留 reset_radar_state 狀態重置、指紋防洗版鎖，與大盤滾動暴衝。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 基礎環境與狀態記憶體初始化 (🔥 新增重置機制)
-#   - 2️⃣ 高頻報價與資料解析模組 (🔥 雙核報價引擎實作)
+#   - 1️⃣ 基礎環境與狀態記憶體初始化
+#   - 2️⃣ 高頻報價與資料解析模組 (三核交叉查證引擎)
 #   - 3️⃣ 警報觸發與冷卻邏輯
-#   - 4️⃣ 引擎主程序
+#   - 4️⃣ 引擎主程序 (🔥 復原精簡命名 TW / US)
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
 
@@ -30,7 +31,7 @@ from core.repositories.monitor_repository import monitor_repo
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ==========================================================
-# 1️⃣ 基礎環境與狀態記憶體初始化 (🔥 新增重置機制)
+# 1️⃣ 基礎環境與狀態記憶體初始化
 # ==========================================================
 _ALERT_HISTORY = {}
 _MARKET_STATE = {'TW': 'CLOSED', 'US': 'CLOSED'}
@@ -58,48 +59,71 @@ def reset_radar_state():
     logging.info("♻️ 引擎狀態記憶體已強制重置。")
 
 # ==========================================================
-# 2️⃣ 高頻報價與資料解析模組 (🔥 雙核報價引擎實作)
+# 2️⃣ 高頻報價與資料解析模組 (三核交叉查證引擎)
 # ==========================================================
 def get_realtime_price(ticker, market_now):
     """
-    混合式雙核報價引擎：
-    - 核心 1 (fast_info): 負責獲取昨收價與累積成交量 (不受時間戳限制)。
-    - 核心 2 (1m K線): 負責獲取精準現價，並強制開啟 auto_adjust 還原權息，且進行嚴格的 Date() 驗證。
+    三核交叉查證引擎 (自我修復版)：
+    - 核心 1 (日 K 線): 專職查閱歷史帳本，比對日期以鎖定「真實昨收價」。
+    - 核心 2 (1m K線): 專職獲取「精準時間戳證明 (is_today)」與「今日開盤價」。
+    - 核心 3 (fast_info): 專職獲取「最終現價 (補回13:30最後一盤)」與「累積成交量」。
     """
     c_price, p_close, o_price = None, None, None
     vol = 0
     is_today = False
+    c_price_min = None
     
     try:
         ticker_obj = yf.Ticker(ticker)
         
-        # 🛡️ 核心 1：使用 fast_info 穩定獲取昨收價與累積成交量
+        # 🛡️ 核心 1：日 K 線 -> 鎖定真實昨收價 (免疫清晨換日錯亂)
         try:
-            p_close = float(ticker_obj.fast_info['previous_close'])
-            vol = float(ticker_obj.fast_info.get('last_volume', 0))
-            o_price = float(ticker_obj.fast_info.get('open', p_close))
+            daily_df = ticker_obj.history(period="5d", auto_adjust=True).dropna(subset=["Close"])
+            if not daily_df.empty and len(daily_df) >= 2:
+                last_daily_date = daily_df.index[-1].date()
+                if last_daily_date == market_now.date():
+                    # 如果日 K 線最後一筆是今天，那昨收就是「倒數第二筆」
+                    p_close = float(daily_df['Close'].iloc[-2])
+                else:
+                    # 如果日 K 線最後一筆是昨天 (或更早)，那它就是「昨收」
+                    p_close = float(daily_df['Close'].iloc[-1])
         except Exception: 
             pass
-            
-        # 🛡️ 核心 2：使用 1 分鐘 K 線獲取精準現價與時間戳 (強制開啟 auto_adjust)
+
+        # 🛡️ 核心 2：1m K 線 -> 獲取開盤價與時間戳證明
         try:
-            df = ticker_obj.history(period="1d", interval="1m", auto_adjust=True).dropna(subset=["Open", "Close"])
-            if not df.empty:
-                c_price = float(df['Close'].iloc[-1])
-                
-                # 嚴格驗證最後一筆撮合資料的日期是否為當地今日
-                last_date = df.index[-1].date()
-                if last_date == market_now.date():
+            min_df = ticker_obj.history(period="1d", interval="1m", auto_adjust=True).dropna(subset=["Open", "Close"])
+            if not min_df.empty:
+                last_min_date = min_df.index[-1].date()
+                if last_min_date == market_now.date():
                     is_today = True 
+                
+                o_price = float(min_df['Open'].iloc[0])
+                c_price_min = float(min_df['Close'].iloc[-1]) # 暫存 1m 的最後價格，做為備援
         except Exception: 
             pass
+
+        # 🛡️ 核心 3：fast_info -> 獲取最終現價與成交量，並進行交叉比對
+        try:
+            fi_c_price = float(ticker_obj.fast_info.get('last_price'))
+            vol = float(ticker_obj.fast_info.get('last_volume', 0))
             
-        # 🛡️ 備援防線：若 1m K線失敗，退守 fast_info 獲取現價 (將交由外層零成交濾網把關)
-        if c_price is None:
-            try:
-                c_price = float(ticker_obj.fast_info['last_price'])
-            except Exception: 
-                pass
+            # 備援：若核心 1/2 失敗，才拿 fast_info 的資料墊檔
+            if p_close is None:
+                p_close = float(ticker_obj.fast_info.get('previous_close'))
+            if o_price is None:
+                o_price = float(ticker_obj.fast_info.get('open', p_close))
+
+            # 自我修復：優先採用 fast_info 補回 13:30 遺失的最後一盤，若無則退守 1m K線
+            if fi_c_price is not None and fi_c_price > 0:
+                c_price = fi_c_price
+            elif c_price_min is not None:
+                c_price = c_price_min
+
+        except Exception: 
+            # 若 fast_info 完全掛點，退守 1m K線
+            if c_price_min is not None:
+                c_price = c_price_min
                 
         return c_price, p_close, o_price, vol, is_today
     except Exception as e:
@@ -213,7 +237,7 @@ def evaluate_alerts(row, quote, tz_now):
     return alerts
 
 # ==========================================================
-# 4️⃣ 引擎主程序
+# 4️⃣ 引擎主程序 (🔥 復原精簡命名 TW / US)
 # ==========================================================
 def run_radar_scan(is_monitoring=False):
     global _MARKET_STATE, _INDEX_HISTORY, _INDEX_LAST_VOL_ALERT
@@ -245,18 +269,18 @@ def run_radar_scan(is_monitoring=False):
             if now_tpe_time < tw_close_trigger and _MARKET_STATE.get('TW') != 'OPEN':
                 _MARKET_STATE['TW'] = 'OPEN'
                 if now_tpe_time <= tw_open_buffer:
-                    send_telegram_message("🎯TW MktIdx | 🟢開盤")
+                    send_telegram_message("🎯TW | 🟢開盤")
                 else:
-                    send_telegram_message("🎯TW MktIdx | 🟢盤中")
+                    send_telegram_message("🎯TW | 🟢盤中")
                 
         if us_open <= now_us_time <= us_close_process:
             process_us = True
             if now_us_time < us_close_trigger and _MARKET_STATE.get('US') != 'OPEN':
                 _MARKET_STATE['US'] = 'OPEN'
                 if now_us_time <= us_open_buffer:
-                    send_telegram_message("🎯US MktIdx | 🟢開盤")
+                    send_telegram_message("🎯US | 🟢開盤")
                 else:
-                    send_telegram_message("🎯US MktIdx | 🟢盤中")
+                    send_telegram_message("🎯US | 🟢盤中")
 
     # 🌟 階段二：常規報價與警報擷取
     if is_monitoring:
@@ -274,7 +298,7 @@ def run_radar_scan(is_monitoring=False):
                     if last_idx_price is not None and abs(curr_price - last_idx_price) < 0.0001:
                         _ALERT_HISTORY['INDEX_TW'] = {'interval_id': idx_interval_id, 'price': curr_price}
                     else:
-                        msg = build_qbs_tg_msg("TW MktIdx", curr_price, q['change_pct'], is_manual=False)
+                        msg = build_qbs_tg_msg("TW", curr_price, q['change_pct'], is_manual=False)
                         send_telegram_message(msg)
                         _ALERT_HISTORY['INDEX_TW'] = {'interval_id': idx_interval_id, 'price': curr_price}
                 
@@ -298,7 +322,7 @@ def run_radar_scan(is_monitoring=False):
                                 vol_sign = "+" if vol_pct > 0 else ""
                                 vol_arrow = "↑" if vol_pct > 0 else "↓"
                                 time_str = now_tpe.strftime('%H:%M')
-                                msg = f"🕒{time_str} | 🎯TW MktIdx | 🔥暴衝 | {'📈' if vol_pct > 0 else '📉'}{vol_sign}{vol_diff:,.2f} ({vol_arrow}{abs(vol_pct):.2f}%)"
+                                msg = f"🕒{time_str} | 🎯TW | 🔥暴衝 | {'📈' if vol_pct > 0 else '📉'}{vol_sign}{vol_diff:,.2f} ({vol_arrow}{abs(vol_pct):.2f}%)"
                                 send_telegram_message(msg)
                                 _INDEX_LAST_VOL_ALERT['TW'] = now_tpe
                                 
@@ -316,7 +340,7 @@ def run_radar_scan(is_monitoring=False):
                     if last_idx_price is not None and abs(curr_price - last_idx_price) < 0.0001:
                         _ALERT_HISTORY['INDEX_US'] = {'interval_id': idx_interval_id, 'price': curr_price}
                     else:
-                        msg = build_qbs_tg_msg("US MktIdx", curr_price, q['change_pct'], is_manual=False)
+                        msg = build_qbs_tg_msg("US", curr_price, q['change_pct'], is_manual=False)
                         send_telegram_message(msg)
                         _ALERT_HISTORY['INDEX_US'] = {'interval_id': idx_interval_id, 'price': curr_price}
                     
@@ -340,7 +364,7 @@ def run_radar_scan(is_monitoring=False):
                                 vol_sign = "+" if vol_pct > 0 else ""
                                 vol_arrow = "↑" if vol_pct > 0 else "↓"
                                 time_str = now_us.strftime('%H:%M')
-                                msg = f"🕒{time_str} | 🎯US MktIdx | 🔥暴衝 | {'📈' if vol_pct > 0 else '📉'}{vol_sign}{vol_diff:,.2f} ({vol_arrow}{abs(vol_pct):.2f}%)"
+                                msg = f"🕒{time_str} | 🎯US | 🔥暴衝 | {'📈' if vol_pct > 0 else '📉'}{vol_sign}{vol_diff:,.2f} ({vol_arrow}{abs(vol_pct):.2f}%)"
                                 send_telegram_message(msg)
                                 _INDEX_LAST_VOL_ALERT['US'] = now_us
 
@@ -364,10 +388,10 @@ def run_radar_scan(is_monitoring=False):
     if is_monitoring:
         if now_tpe_time >= tw_close_trigger and _MARKET_STATE.get('TW') == 'OPEN':
             _MARKET_STATE['TW'] = 'CLOSED'
-            send_telegram_message("🎯TW MktIdx | 🔴收盤")
+            send_telegram_message("🎯TW | 🔴收盤")
             
         if now_us_time >= us_close_trigger and _MARKET_STATE.get('US') == 'OPEN':
             _MARKET_STATE['US'] = 'CLOSED'
-            send_telegram_message("🎯US MktIdx | 🔴收盤")
+            send_telegram_message("🎯US | 🔴收盤")
             
     return quotes, all_triggered_alerts
