@@ -2,18 +2,18 @@
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # 專案名稱 : Quantitative Backtesting System (QBS)
 # 檔案名稱 : ui_monitor.py
-# 程式版本 : ui_v1.11.0 (Phase 7: 雲端動態字典與雙層刪除版)
+# 程式版本 : ui_v1.11.1 (Phase 8: 動態燈號與智慧條件隱藏版)
 #
 # 📋 進版說明 (Version Notes):
-#   1. [雙層刪除] 實作「停止監測」與「徹底抹除字典」雙軌制，徹底解決錯誤股號永久殘留下拉選單的問題。
-#   2. [寫入防呆] 繼承 v1.10.3 的爬蟲與 API 雙重驗證，輸入無效股號時拒絕寫入永久資料庫。
-#   3. [格式統一] 完美繼承 dynamic_format_option，全面對齊「代碼 + 名稱」。
+#   1. [動態燈號] 新增 get_market_status_icon()，依據當地時區與開關盤時間，自動切換大盤標頭的 🟢 與 🔴 狀態。
+#   2. [智慧條件隱藏] 重新撰寫小卡下方的條件字串組裝邏輯，無值則隱藏，有值才以 " | " 完美拼接，減少版面雜訊。
+#   3. [核心繼承] 100% 完整保留 v1.11.0 的側邊欄雙層刪除與寫入防呆機制。
 #
 # 🏷️ 區塊說明 (Block Description):
-#   - 1️⃣ 側邊欄渲染 (🔥 新增雙層刪除機制)
+#   - 1️⃣ 側邊欄渲染 (雙層刪除機制)
 #   - 2️⃣ 資料獲取與動態快取防護
 #   - 3️⃣ 介面渲染主程式
-#   - 4️⃣ 市場群組渲染器
+#   - 4️⃣ 市場群組渲染器 (🔥 導入動態燈號與智慧隱藏)
 #   - 5️⃣ 系統工具組與推播測試元件
 # ⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐
 # ==========================================================
@@ -253,18 +253,36 @@ def render_radar_dashboard():
         render_market_group("us", us_targets, quotes, alerts)
 
 # ==========================================================
-# 4️⃣ 市場群組渲染器
+# 4️⃣ 市場群組渲染器 (🔥 導入動態燈號與智慧隱藏)
 # ==========================================================
+def get_market_status_icon(market_type):
+    """動態判斷當地市場是否開盤，回傳 🟢 或 🔴"""
+    if market_type == "tw":
+        tz = pytz.timezone('Asia/Taipei')
+        now_time = datetime.now(tz).time()
+        weekday = datetime.now(tz).weekday()
+        # 台股開盤：09:00 - 13:30，工作日
+        if weekday < 5 and datetime.strptime("09:00", "%H:%M").time() <= now_time <= datetime.strptime("13:30", "%H:%M").time():
+            return "🟢"
+    else:
+        tz = pytz.timezone('US/Eastern')
+        now_time = datetime.now(tz).time()
+        weekday = datetime.now(tz).weekday()
+        # 美股開盤：09:30 - 16:00，工作日
+        if weekday < 5 and datetime.strptime("09:30", "%H:%M").time() <= now_time <= datetime.strptime("16:00", "%H:%M").time():
+            return "🟢"
+    return "🔴"
+
 def render_market_group(market_type, targets_df, quotes, alerts):
+    icon = get_market_status_icon(market_type)
+    
     if market_type == "tw":
         idx_ticker = "^TWII"
         idx_name = "tw 台灣股市 (Taiwan Market)"
-        icon = "🔴"
         bar_color = "#3b82f6"
     else:
         idx_ticker = "^IXIC"
         idx_name = "us 美國股市 (Nasdaq)"
-        icon = "🟢"
         bar_color = "#3b82f6"
 
     idx_quote_html = ""
@@ -340,9 +358,23 @@ def render_market_group(market_type, targets_df, quotes, alerts):
             if ticker_alerts:
                 badge_html = f"<div style='margin-top: 15px; background-color: {bg_color}; color: {text_color}; padding: 10px; border-radius: 6px; text-align: center; font-weight: bold; font-size: 0.95rem; border: 1px solid {text_color}; box-shadow: inset 0 0 8px rgba(0,0,0,0.5);'>📈 觸發: {ticker_alerts[0]['message']}</div>"
 
-            th_raw = row['thresholds'] if pd.notna(row['thresholds']) and row['thresholds'] else "--"
-            en_raw = row['entry_prices'] if pd.notna(row['entry_prices']) and row['entry_prices'] else "--"
-            ex_raw = row['exit_prices'] if pd.notna(row['exit_prices']) and row['exit_prices'] else "--"
+            # 智慧隱藏邏輯：動態組裝條件字串
+            th_val = row['thresholds']
+            en_val = row['entry_prices']
+            ex_val = row['exit_prices']
+            
+            cond_parts = []
+            if pd.notna(th_val) and str(th_val).strip() and str(th_val).strip() != 'nan':
+                cond_parts.append(f"門檻: {th_val}%")
+            if pd.notna(en_val) and str(en_val).strip() and str(en_val).strip() != 'nan':
+                cond_parts.append(f"進場: ${en_val}")
+            if pd.notna(ex_val) and str(ex_val).strip() and str(ex_val).strip() != 'nan':
+                cond_parts.append(f"出場: ${ex_val}")
+                
+            if cond_parts:
+                condition_display = " | ".join(cond_parts)
+            else:
+                condition_display = "未設定監控條件"
 
             card_html = textwrap.dedent(f"""
             <div style="width: 280px; min-width: 280px; background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 8px; padding: 18px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; flex-direction: column; justify-content: space-between;">
@@ -353,7 +385,7 @@ def render_market_group(market_type, targets_df, quotes, alerts):
             <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">開盤： <span style="color: #f8fafc; margin-left: 5px;">${open_p:.2f}</span></div>
             <div style="font-size: 0.9rem; color: #94a3b8; font-weight: 600;">漲幅： <span style="color: {text_color}; margin-left: 5px;">{chg_str}</span></div>
             </div>
-            <div style="border-top: 1px dashed #475569; padding-top: 12px; text-align: center; color: #64748b; font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">門檻: {th_raw}% | 進場: ${en_raw} | 出場: ${ex_raw}</div>
+            <div style="border-top: 1px dashed #475569; padding-top: 12px; text-align: center; color: #64748b; font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{condition_display}</div>
             {badge_html}
             </div>
             """).strip()
